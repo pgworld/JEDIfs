@@ -1,7 +1,7 @@
 #define FUSE_USE_VERSION 26
 #define D_FILE_OFFSET_BITS = 64
 #include <fuse.h>
-#include <hiredis.h>
+#include "hiredis.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -628,7 +628,7 @@ fs_symlink(const char *target, const char *path)
     redisAppendCommand(_g_redis, "HSET %d%s:meta TARGET %s",depth,path,target);
     redisAppendCommand(_g_redis, "HSET %d%s:meta  MODE %d",depth,path, 0444);
     redisAppendCommand(_g_redis, "HSET %d%s:meta UID %d",
-                       depth,entry,fuse_get_context()->uid);
+                       depth,path,fuse_get_context()->uid);
     redisAppendCommand(_g_redis, "HSET %d%s:meta GID %d",depth,path, fuse_get_context()->gid);
     redisAppendCommand(_g_redis, "HSET %d%s:meta SIZE %d",depth,path, 0);
     redisAppendCommand(_g_redis, "HSET %d%s:meta CTIME %d",depth,path, time(NULL));
