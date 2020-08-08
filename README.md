@@ -24,9 +24,9 @@ Once built the software can be installed via:
 It is possible to run the filesystem without having installed the
 software, via:
 
-     #redisfs
+     #jedifs
 
 # TODO
 ---
-- develop fs_rename
-- revise fs_rmdir
+- Develop fs_rename
+- Multithreading(mutex lock from file lock)
