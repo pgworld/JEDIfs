@@ -23,7 +23,7 @@ all: link jedifs jedifs-snapshot
 #  Clean.
 #
 clean:
-	rm jedifs jedifs-snapshot *.o || true
+	rm -f jedifs jedifs-snapshot *.o || true
 	rm -f fmacros.h || true
 	rm -f hiredis.c || true
 	rm -f hiredis.h || true
@@ -44,6 +44,8 @@ clean:
 	rm -f dict.c || true
 	rm -f dict.h || true
 	rm -f async_private.h || true
+	rm -f jedifs-snapshot || true
+	rm -f jedifs-snapshot.o || true
 
 
 #
