@@ -106,6 +106,9 @@ typedef struct redisAsyncContext {
         struct dict *channels;
         struct dict *patterns;
     } sub;
+
+    /* Any configured RESP3 PUSH handler */
+    redisAsyncPushFn *push_cb;
 } redisAsyncContext;
 
 /* Functions that proxy to hiredis */
@@ -118,7 +121,8 @@ redisAsyncContext *redisAsyncConnectUnix(const char *path);
 int redisAsyncSetConnectCallback(redisAsyncContext *ac, redisConnectCallback *fn);
 int redisAsyncSetDisconnectCallback(redisAsyncContext *ac, redisDisconnectCallback *fn);
 
-void redisAsyncSetTimeout(redisAsyncContext *ac, struct timeval tv);
+redisAsyncPushFn *redisAsyncSetPushCallback(redisAsyncContext *ac, redisAsyncPushFn *fn);
+int redisAsyncSetTimeout(redisAsyncContext *ac, struct timeval tv);
 void redisAsyncDisconnect(redisAsyncContext *ac);
 void redisAsyncFree(redisAsyncContext *ac);
 

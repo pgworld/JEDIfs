@@ -3,9 +3,9 @@
 # Copyright (C) 2010-2011 Pieter Noordhuis <pcnoordhuis at gmail dot com>
 # This file is released under the BSD license, see the COPYING file
 
-OBJ=net.o hiredis.o sds.o async.o read.o sockcompat.o alloc.o
+OBJ=alloc.o net.o hiredis.o sds.o async.o read.o sockcompat.o
 SSL_OBJ=ssl.o
-EXAMPLES=hiredis-example hiredis-example-libevent hiredis-example-libev hiredis-example-glib
+EXAMPLES=hiredis-example hiredis-example-libevent hiredis-example-libev hiredis-example-glib hiredis-example-push
 ifeq ($(USE_SSL),1)
 EXAMPLES+=hiredis-example-ssl hiredis-example-libevent-ssl
 endif
@@ -109,16 +109,16 @@ all: $(SSL_DYLIBNAME) $(SSL_STLIBNAME) $(SSL_PKGCONFNAME)
 endif
 
 # Deps (use make dep to generate this)
+alloc.o: alloc.c fmacros.h alloc.h
 async.o: async.c fmacros.h alloc.h async.h hiredis.h read.h sds.h net.h dict.c dict.h win32.h async_private.h
 dict.o: dict.c fmacros.h alloc.h dict.h
 hiredis.o: hiredis.c fmacros.h hiredis.h read.h sds.h alloc.h net.h async.h win32.h
-alloc.o: alloc.c alloc.h
 net.o: net.c fmacros.h net.h hiredis.h read.h sds.h alloc.h sockcompat.h win32.h
-read.o: read.c fmacros.h read.h sds.h win32.h
-sds.o: sds.c sds.h sdsalloc.h
+read.o: read.c fmacros.h alloc.h read.h sds.h win32.h
+sds.o: sds.c sds.h sdsalloc.h alloc.h
 sockcompat.o: sockcompat.c sockcompat.h
-ssl.o: ssl.c hiredis.h read.h sds.h alloc.h async.h async_private.h
-test.o: test.c fmacros.h hiredis.h read.h sds.h alloc.h net.h
+ssl.o: ssl.c hiredis.h read.h sds.h alloc.h async.h win32.h async_private.h
+test.o: test.c fmacros.h hiredis.h read.h sds.h alloc.h net.h sockcompat.h win32.h
 
 $(DYLIBNAME): $(OBJ)
 	$(DYLIB_MAKE_CMD) -o $(DYLIBNAME) $(OBJ) $(REAL_LDFLAGS)
@@ -161,6 +161,7 @@ hiredis-example-macosx: examples/example-macosx.c adapters/macosx.h $(STLIBNAME)
 hiredis-example-ssl: examples/example-ssl.c $(STLIBNAME) $(SSL_STLIBNAME)
 	$(CC) -o examples/$@ $(REAL_CFLAGS) -I. $< $(STLIBNAME) $(SSL_STLIBNAME) $(REAL_LDFLAGS) $(SSL_LDFLAGS)
 
+
 ifndef AE_DIR
 hiredis-example-ae:
 	@echo "Please specify AE_DIR (e.g. <redis repository>/src)"
@@ -193,6 +194,9 @@ hiredis-example-qt: examples/example-qt.cpp adapters/qt.h $(STLIBNAME)
 endif
 
 hiredis-example: examples/example.c $(STLIBNAME)
+	$(CC) -o examples/$@ $(REAL_CFLAGS) -I. $< $(STLIBNAME) $(REAL_LDFLAGS)
+
+hiredis-example-push: examples/example-push.c $(STLIBNAME)
 	$(CC) -o examples/$@ $(REAL_CFLAGS) -I. $< $(STLIBNAME) $(REAL_LDFLAGS)
 
 examples: $(EXAMPLES)

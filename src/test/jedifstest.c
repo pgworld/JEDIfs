@@ -1,7 +1,7 @@
 #define FUSE_USE_VERSION 26
 #define D_FILE_OFFSET_BITS = 64
 #include <fuse.h>
-#include <hiredis.h>
+#include "hiredis.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -19,11 +19,13 @@
 
 redisReply *reply;
 
-int time_check[18][2];
+int time_check[18][6][2] = {{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}},{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}}};
 
-char* func_list[18] = {"init", "destroy", "readdir", "getattr", "mkdir", "rmdir", "write", "read", "symlink", "readlink", "open", "create", "chown", "chmod", "unlink", "utimens", "access", "truncate"};
+char* func_list[18][6] = {{"is_directory", "exists","","","", ""}, {"readdir", "keys", "hget", "", "", ""}, {"getattr", "exists", "first hmget", "second hmget", "", ""}, {"mkdir", "hset", "", "", "", ""}, {"count_dir_ent", "keys", "", "", "", ""}, {"rmdir", "unlink", "", "", "", ""}, {"write", "hset", "set", "hincrby", "append", "hset"}, {"read", "hget", "getrange", "substr"}, {"symlink", "hmset", "", "", "", ""}, {"readlink", "hget", "", "", "", ""}, {"open", "hset", "", "", "", ""}, {"create", "hset", "", "", "", ""}, {"chown", "hset", "", "", "", ""}, {"chmod", "hset", "", "", "", ""}, {"unlink", "first unlink", "second unlink", "", "", ""}, {"utimens", "hset", "", "", "", ""}, {"access", "hset", "", "", "", ""}, {"truncate", "del", "hset", "", "", ""}};
 
-clock_t start, end;
+int redis_alive_time[2] = {0, 0};
+
+clock_t start[6], end[6];
 int time_test = 1;
 
 int _g_redis_port = 6379;
@@ -44,6 +46,7 @@ redisContext *_g_redis = NULL;
 void
 redis_alive()
 {
+    start[0] = clock();
     struct timeval timeout = { 5, 0 };    // 5 seconds
     redisReply *reply = NULL;
 
@@ -57,6 +60,9 @@ redis_alive()
 	if ((reply != NULL) &&
 		(reply->str != NULL) && (strcmp(reply->str, "PONG") == 0)){
 	    freeReplyObject(reply);
+	    end[0] = clock();
+	    redis_alive_time[1] = (redis_alive_time[1]*redis_alive_time[0] + (end[0] - start[0]))/(redis_alive_time[0] + 1);
+	    redis_alive_time[0] += 1;
 	    return;
 	}
 	else
@@ -82,6 +88,10 @@ redis_alive()
 	    fprintf(stderr, "Reconnected to redis server on [%s:%d]\n",
 		    _g_redis_host, _g_redis_port);
     }
+    end[0] = clock();
+    redis_alive_time[1] = (redis_alive_time[1]*redis_alive_time[0] + (end[0] - start[0]))/(redis_alive_time[0] + 1);
+    redis_alive_time[0] += 1;
+
 }
 
 char *
@@ -144,54 +154,54 @@ get_depth(const char *path)
 void *
 fs_init()
 {
-    start = clock();
     if (_g_debug)
 	fprintf(stderr, "fs_init()\n");
 
     pthread_mutex_init(&_g_lock, NULL);
     redis_alive();
-    end = clock();
-    if(!time_check[0][1])
-    {
-    time_check[0][1] = 1;
-    time_check[0][0] = 0;
-    }
-    time_check[0][0] = (time_check[0][0]*time_check[0][1] + (end - start))/++time_check[0][1];
+
     return 0;
 }
 
 void
 fs_destroy()
 {
-    start = clock();
     if (_g_debug)
 	fprintf(stderr, "fs_destroy()\n");
-    end = clock();
-    if(!time_check[1][1])
-    {
-    time_check[1][1] = 1;
-    time_check[1][0] = 0;
-    }
-    time_check[1][0] = (time_check[1][0]*time_check[1][1] + (end - start))/++time_check[1][1];
     pthread_mutex_destroy(&_g_lock);
 
     if(time_test)
     {
         for(int i = 0; i < 18; i++)
 	{
-	    printf("running time %s: %dms\n", func_list[i], time_check[i][0]);
+	    printf("running time %s(total): %dms\n", func_list[i][0], time_check[i][0][1]);
+	    for(int j = 0; j < 6; j++)
+	    {
+		if(func_list[i][j] == "") break;
+	        printf("\t%s: %dms\n", func_list[i][j], time_check[i][j][1]);
+	    }
 	}
 
     }
+    int delay_time_check[2] = {0, 0};
+    
+    for(int i = 0; i < 500; i++)
+    {
+	start[0] = clock();
+	end[0] = clock();
 
-    start = clock();
-    end = clock();
-    printf("%dms\n", end - start);
+        delay_time_check[1] = (delay_time_check[1]*delay_time_check[0] + (end[0] - start[0]))/(delay_time_check[0] + 1);
+	delay_time_check[0] += 1;
+    }
+
+    printf("delay of time check: %d\n", delay_time_check[1]);
+    printf("delay of redis_alive: %d\n", redis_alive_time[1]);
 }
 
 int
 is_directory(const char *path)
 {
+    start[0] = clock();
     int ret = 0;
     redisReply *reply = NULL;
 
@@ -201,13 +211,21 @@ is_directory(const char *path)
     redis_alive();
 
     int depth = get_depth(path);
-
+    start[1] = clock();
     reply = redisCommand(_g_redis, "EXISTS %d%s:data", depth, path);
+    end[1] = clock();
+    time_check[0][1][1] = (time_check[0][1][0]*time_check[0][1][1] + (end[1] - start[1]))/(time_check[0][1][0]+1);
+    time_check[0][1][0] += 1;
 
     if (reply->integer == 0)
 	ret = 1;
 
     freeReplyObject(reply);
+    end[0] = clock();
+
+    time_check[0][0][1] = (time_check[0][0][0]*time_check[0][0][1] + (end[0] - start[0]))/(time_check[0][0][0]+1);
+    time_check[0][0][0] += 1;
+
 
     return (ret);
 }
@@ -222,7 +240,7 @@ fs_readdir(const char *path,
     int i;
 
     pthread_mutex_lock(&_g_lock);
-    start = clock();
+    start[0] = clock();
 
     if (_g_debug)
 	fprintf(stderr, "fs_readdir(%s)\n", path);
@@ -232,25 +250,32 @@ fs_readdir(const char *path,
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
     int depth = get_depth(path);
+    start[1] = clock();
     reply = redisCommand(_g_redis, "KEYS %d%s*:meta", depth + 1, path);
-    
+    end[1] = clock();
+    time_check[1][1][1] = (time_check[1][1][0]*time_check[1][1][1] + (end[1] - start[1]))/(time_check[1][1][0]+1);
+    time_check[1][1][0] += 1;
 
+
+
+    start[2] = clock();
 
     for(i = 0; i < reply -> elements; i++)
     {
 	subreply = redisCommand(_g_redis, "HGET %s NAME", ((reply -> element[i])->str));
 	filler(buf, strdup(subreply->str), NULL, 0);
     }
-   
+
+    end[2] = clock();
+    time_check[1][2][1] = (time_check[1][2][0]*time_check[1][2][1] + (end[2] - start[2]))/(time_check[1][2][0]+1);
+    time_check[1][2][0] += 1;
+
+
     freeReplyObject(reply);
     freeReplyObject(subreply);
-    end = clock();
-    if(!time_check[2][1])
-    {
-    time_check[2][1] = 1;
-    time_check[2][0] = 0;
-    }
-    time_check[2][0] = (time_check[2][0]*time_check[2][1] + (end - start))/++time_check[2][1];
+    end[0] = clock();
+    time_check[1][0][1] = (time_check[1][0][0]*time_check[1][0][1] + (end[0] - start[0]))/(time_check[1][0][0]+1);
+    time_check[1][0][0] += 1;
     pthread_mutex_unlock(&_g_lock);
     return 0;
 }
@@ -261,7 +286,7 @@ fs_getattr(const char *path, struct stat *stbuf)
     redisReply *reply = NULL;
 
     pthread_mutex_lock(&_g_lock);
-    start = clock();
+    start[0] = clock();
 
     if (_g_debug)
         fprintf(stderr, "fs_getattr(%s);\n", path);
@@ -287,8 +312,11 @@ fs_getattr(const char *path, struct stat *stbuf)
     }
 
     int depth = get_depth(path);
-
+    start[1] = clock();
     reply = redisCommand(_g_redis, "EXISTS %d%s:meta", depth, path);
+    end[1] = clock();
+    time_check[2][1][1] = (time_check[2][1][0]*time_check[2][1][1] + (end[1] - start[1]))/(time_check[2][1][0]+1);
+    time_check[2][1][0] += 1;
 
     if (reply->integer == 0)
     {
@@ -298,8 +326,11 @@ fs_getattr(const char *path, struct stat *stbuf)
     }
 
     freeReplyObject(reply);
-
+    start[2] = clock();
     redisAppendCommand(_g_redis, "HMGET %d%s:meta CTIME ATIME MTIME GID UID LINK", depth, path);
+    end[2] = clock();
+    time_check[2][2][1] = (time_check[2][2][0]*time_check[2][2][1] + (end[2] - start[2]))/(time_check[2][2][0]+1);
+    time_check[2][2][0] += 1;
 
     redisGetReply(_g_redis, (void **)&reply);
     if ((reply->element[0] != NULL)
@@ -324,8 +355,11 @@ fs_getattr(const char *path, struct stat *stbuf)
         && (reply->element[6]->type == REDIS_REPLY_STRING))
         stbuf->st_ctime = atoi(reply->element[5]->str);*/
     freeReplyObject(reply);
-
+    start[3] = clock();
     reply = redisCommand(_g_redis, "HMGET %d%s:meta TYPE MODE SIZE", depth, path);
+    end[3] = clock();
+    time_check[2][3][1] = (time_check[2][3][0]*time_check[2][3][1] + (end[3] - start[3]))/(time_check[2][3][0]+1);
+    time_check[2][3][0] += 1;
 
     if ((reply != NULL) && (reply->element[0] != NULL)
         && (reply->element[0]->type == REDIS_REPLY_STRING))
@@ -365,13 +399,10 @@ fs_getattr(const char *path, struct stat *stbuf)
         }
     }
     freeReplyObject(reply);
-    end = clock();
-    if(!time_check[3][1])
-    {
-    time_check[3][1] = 1;
-    time_check[3][0] = 0;
-    }
-    time_check[3][0] = (time_check[3][0]*time_check[3][1] + (end - start))/++time_check[3][1];
+    end[0] = clock();
+    time_check[2][0][1] = (time_check[2][0][0]*time_check[2][0][1] + (end[0] - start[0]))/(time_check[2][0][0]+1);
+    time_check[2][0][0] += 1;
+
 
 
     pthread_mutex_unlock(&_g_lock);
@@ -385,7 +416,7 @@ fs_mkdir(const char *path, mode_t mode)
     redisReply *reply = NULL;
 
     pthread_mutex_lock(&_g_lock);
-    start = clock();
+    start[0] = clock();
 
     if (_g_debug)
 	fprintf(stderr, "fs_mkdir(%s);\n", path);
@@ -401,19 +432,17 @@ fs_mkdir(const char *path, mode_t mode)
     char *entry = get_basename(path);
 
     int depth = get_depth(path);
-
+    start[1] = clock();
     reply = redisCommand(_g_redis, "HSET %d%s:meta NAME %s TYPE DIR MODE %d UID %d GID %d SIZE %d CTIME %d MTIME %d ATIME %d LINK 1", depth, path, entry, mode, fuse_get_context()->uid, fuse_get_context()->gid, 0, time(NULL), time(NULL), time(NULL));
+    end[1] = clock();
+    time_check[3][1][1] = (time_check[3][1][0]*time_check[3][1][1] + (end[1] - start[1]))/(time_check[3][1][0]+1);
+    time_check[3][1][0] += 1;
 
     freeReplyObject(reply);
-    
-    free(entry);
-    end = clock();
-    if(!time_check[4][1])
-    {
-    time_check[4][1] = 1;
-    time_check[4][0] = 0;
-    }
-    time_check[4][0] = (time_check[4][0]*time_check[4][1] + (end - start))/++time_check[4][1];
+    end[0] = clock();
+    time_check[3][0][1] = (time_check[3][0][0]*time_check[3][0][1] + (end[0] - start[0]))/(time_check[3][0][0]+1);
+    time_check[3][0][0] += 1;
+
     pthread_mutex_unlock(&_g_lock);
     return 0;
 }
@@ -421,12 +450,22 @@ fs_mkdir(const char *path, mode_t mode)
 int
 count_dir_ent(const char *path)
 {
+    start[0] = clock();
     redisReply *reply = NULL;
     int depth = get_depth(path);
+    start[1] = clock();
     reply = redisCommand(_g_redis, "KEYS %d%s/*", depth + 1, path);
+    end[1] = clock();
+    time_check[4][1][1] = (time_check[4][1][0]*time_check[4][1][1] + (end[1] - start[1]))/(time_check[4][1][0]+1);
+    time_check[4][1][0] += 1;
+
     int res = reply->elements;
     printf("%d", res);
     freeReplyObject(reply);
+    end[0] = clock();
+    time_check[4][0][1] = (time_check[4][0][0]*time_check[4][0][1] + (end[0] - start[0]))/(time_check[4][0][0]+1);
+    time_check[4][0][0] += 1;
+
     return res;
 }
 
@@ -436,7 +475,7 @@ fs_rmdir(const char *path)
     redisReply *reply = NULL;
 
     pthread_mutex_lock(&_g_lock);
-    start = clock();
+    start[0] = clock();
 
     if (_g_debug)
 	fprintf(stderr, "fs_rmdir(%s);\n", path);
@@ -463,16 +502,19 @@ fs_rmdir(const char *path)
     
     int depth = get_depth(path);
     printf("\nredis code: UNLINK %d%s:meta\n", depth, path);
+    start[1] = clock();
     reply = redisCommand(_g_redis, "UNLINK %d%s:meta", depth, path);
+    end[1] = clock();
+    time_check[5][1][1] = (time_check[5][1][0]*time_check[5][1][1] + (end[1] - start[1]))/(time_check[5][1][0]+1);
+    time_check[5][1][0] += 1;
+
 
     freeReplyObject(reply);
-    end = clock();
-    if(!time_check[0][1])
-    {
-    time_check[5][1] = 1;
-    time_check[5][0] = 0;
-    }
-    time_check[5][0] = (time_check[5][0]*time_check[5][1] + (end - start))/++time_check[5][1];
+    end[0] = clock();
+    time_check[5][0][1] = (time_check[5][0][0]*time_check[5][0][1] + (end[0] - start[0]))/(time_check[5][0][0]+1);
+    time_check[5][0][0] += 1;
+
+
     pthread_mutex_unlock(&_g_lock);
     return 0;
 }
@@ -485,7 +527,7 @@ fs_write(const char *path,
     redisReply *reply = NULL;
 
     pthread_mutex_lock(&_g_lock);
-    start = clock();
+    start[0] = clock();
 
     if (_g_debug)
 	fprintf(stderr, "fs_write(%s);\n", path);
@@ -507,12 +549,24 @@ fs_write(const char *path,
 
 	if (_g_debug)
             fprintf(stderr, "fs_write->simple(%s);\n", path);
-
+        start[1] = clock();
 	redisAppendCommand(_g_redis, "HSET %d%s:meta SIZE %d MTIME %d", depth, path, size, time(NULL));
+
+        end[1] = clock();
+        time_check[6][1][1] = (time_check[6][1][0]*time_check[6][1][1] + (end[1] - start[1]))/(time_check[6][1][0]+1);
+        time_check[6][1][0] += 1;
+
+
         redisGetReply(_g_redis, (void **)&reply);
         freeReplyObject(reply);
-	    
+        start[2] = clock();	    
 	redisAppendCommand(_g_redis, "SET %d%s:data %b", depth, path, mem, size);
+        end[2] = clock();
+        time_check[6][2][1] = (time_check[6][2][0]*time_check[6][2][1] + (end[2] - start[2]))/(time_check[6][2][0]+1);
+    time_check[6][2][0] += 1;
+
+
+
 	redisGetReply(_g_redis, (void **)&reply);
 	freeReplyObject(reply);
 	    
@@ -525,13 +579,26 @@ fs_write(const char *path,
 
 	char *mem = malloc(size);
 	memcpy(mem, buf, size);
-
+        start[3] = clock();	
 	redisAppendCommand(_g_redis, "HINCRBY %d%s:meta SIZE %d", depth, path, size);
+	end[3] = clock();
+        time_check[6][3][1] = (time_check[6][3][0]*time_check[6][3][1] + (end[3] - start[3]))/(time_check[6][3][0]+1);
+    time_check[6][3][0] += 1;
+        start[4] = clock();
 	redisAppendCommand(_g_redis, "APPEND %d%s:data %b", depth, path, mem, size);
+	end[4] = clock();
+        time_check[6][4][1] = (time_check[6][4][0]*time_check[6][4][1] + (end[4] - start[4]))/(time_check[6][4][0]+1);
+    time_check[6][4][0] += 1;
+
 
 	if (!_g_fast)
 	{
+            start[5] = clock();
 	    redisAppendCommand(_g_redis, "HSET %d%s:meta MTIME %d", depth, path, time(NULL));
+	    end[5] = clock();
+            time_check[6][5][1] = (time_check[6][5][0]*time_check[6][5][1] + (end[5] - start[5]))/(time_check[6][5][0]+1);
+            time_check[6][5][0] += 1;
+
 	    redisGetReply(_g_redis, (void **)&reply);
 	    freeReplyObject(reply);
 	}
@@ -543,13 +610,12 @@ fs_write(const char *path,
 
 	free(mem);
     }
-    end = clock();
-    if(!time_check[6][1])
-    {
-    time_check[6][1] = 1;
-    time_check[6][0] = 0;
-    }
-    time_check[6][0] = (time_check[6][0]*time_check[6][1] + (end - start))/++time_check[6][1];
+    end[0] = clock();
+    time_check[6][0][1] = (time_check[6][0][0]*time_check[1][0][1] + (end[0] - start[0]))/(time_check[6][0][0]+1);
+    time_check[6][0][0] += 1;
+
+
+
     pthread_mutex_unlock(&_g_lock);
     return size;
 }
@@ -562,15 +628,18 @@ fs_read(const char *path, char *buf, size_t size, off_t offset,
     size_t sz;
 
     pthread_mutex_lock(&_g_lock);
-    start = clock();
+    start[0] = clock();
     if (_g_debug)
         fprintf(stderr, "fs_read(%s);\n", path);
 
     redis_alive();
     
     int depth = get_depth(path);
-
+    start[1] = clock();
     reply = redisCommand(_g_redis, "HGET %d%s:meta SIZE", depth, path);
+    end[1] = clock();
+    time_check[7][1][1] = (time_check[7][1][0]*time_check[7][1][1] + (end[1] - start[1]))/(time_check[7][1][0]+1);
+    time_check[7][1][0] += 1;
 
     sz = atoi(reply->str);
     freeReplyObject(reply);
@@ -579,27 +648,31 @@ fs_read(const char *path, char *buf, size_t size, off_t offset,
 	size = sz;
     if (offset + size > sz)
 	size = sz - offset;
-
+    start[2] = clock();
     reply = redisCommand(_g_redis, "GETRANGE %d%s:data %lu %lu", depth, path, offset, size + offset);
+    end[2] = clock();
+    time_check[7][2][1] = (time_check[7][2][0]*time_check[7][2][1] + (end[2] - start[2]))/(time_check[7][2][0]+1);
+    time_check[7][2][0] += 1;
 
     if  ((reply != NULL) && (reply->type == REDIS_REPLY_ERROR))
 	{
 	    freeReplyObject(reply);
-
+            start[3] = clock();
 	    reply = redisCommand(_g_redis, "SUBSTR %d%s:data %lu %lu", depth, path, offset, size + offset);
+	    end[3] = clock();
+            time_check[7][3][1] = (time_check[7][3][0]*time_check[7][3][1] + (end[3] - start[3]))/(time_check[7][3][0]+1);
+            time_check[7][3][0] += 1;
+
 	}
 
     if (size > 0)
 	memcpy(buf, reply->str, size);
 
     freeReplyObject(reply);
-    end = clock();
-    if(!time_check[7][1])
-    {
-    time_check[7][1] = 1;
-    time_check[7][0] = 0;
-    }
-    time_check[7][0] = (time_check[7][0]*time_check[7][1] + (end - start))/++time_check[7][1];
+    end[0] = clock();
+    time_check[7][0][1] = (time_check[7][0][0]*time_check[7][0][1] + (end[0] - start[0]))/(time_check[7][0][0]+1);
+    time_check[7][0][0] += 1;
+
     pthread_mutex_unlock(&_g_lock);
     return size;
 }
@@ -612,7 +685,7 @@ fs_symlink(const char *target, const char *path)
     char *entry =get_basename(path);
 
     pthread_mutex_lock(&_g_lock);
-    start = clock();
+    start[0] = clock();
     if (_g_debug)
 	    fprintf(stderr,"fs_symlink(target:%s -> %s);\n", target, path);
 
@@ -622,34 +695,21 @@ fs_symlink(const char *target, const char *path)
 	    return -EPERM;
     }
     redis_alive();
+    start[1] = clock();
+    reply = redisCommand(_g_redis, "HMSET %d%s:meta NAME %s TYPE LINK TARGET %s MODE %d UID %d GID %d SIZE %d CTIME %d MTIME %d ATIME %d LINK 1", depth, path, entry, target, 0444, fuse_get_context()->uid, fuse_get_context()->gid, 0, time(NULL), time(NULL), time(NULL));
+    end[1] = clock();
+    time_check[8][1][1] = (time_check[8][1][0]*time_check[8][1][1] + (end[1] - start[1]))/(time_check[8][1][0]+1);
+    time_check[8][1][0] += 1;
 
-    redisAppendCommand(_g_redis, "HSET %d%s:meta NAME %s",depth,path, entry);
-    redisAppendCommand(_g_redis, "HSET %d%s:meta TYPE LINK",depth,path,entry);
-    redisAppendCommand(_g_redis, "HSET %d%s:meta TARGET %s",depth,path,target);
-    redisAppendCommand(_g_redis, "HSET %d%s:meta  MODE %d",depth,path, 0444);
-    redisAppendCommand(_g_redis, "HSET %d%s:meta UID %d",
-                       depth,entry,fuse_get_context()->uid);
-    redisAppendCommand(_g_redis, "HSET %d%s:meta GID %d",depth,path, fuse_get_context()->gid);
-    redisAppendCommand(_g_redis, "HSET %d%s:meta SIZE %d",depth,path, 0);
-    redisAppendCommand(_g_redis, "HSET %d%s:meta CTIME %d",depth,path, time(NULL));
-    redisAppendCommand(_g_redis, "HSET %d%s:meta MTIME %d",depth,path, time(NULL));
-    redisAppendCommand(_g_redis, "HSET %d%s:meta ATIME %d",depth,path,time(NULL));
-    redisAppendCommand(_g_redis, "HSET %d%s:meta LINK 1",depth,path);   
-
-int i = 0;
-for (i = 0; i < 11; i++)
-{
-    redisGetReply(_g_redis,(void**)&reply);
     freeReplyObject(reply);
-}
+
     free(entry);
-    end = clock();
-    if(!time_check[8][1])
-    {
-    time_check[8][1] = 1;
-    time_check[8][0] = 0;
-    }
-    time_check[8][0] = (time_check[8][0]*time_check[8][1] + (end - start))/++time_check[8][1];
+
+    end[0] = clock();
+    time_check[8][0][1] = (time_check[8][0][0]*time_check[8][0][1] + (end[0] - start[0]))/(time_check[8][0][0]+1);
+    time_check[8][0][0] += 1;
+
+
     pthread_mutex_unlock(&_g_lock);
     return 0;
 }
@@ -659,30 +719,37 @@ fs_readlink(const char *path, char *buf, size_t size)
 {
     redisReply *reply =NULL;
     pthread_mutex_lock(&_g_lock);
-    start = clock();
+    start[0] = clock();
     int depth=get_depth(path);
 
     if (_g_debug)
 	fprintf(stderr, "fs_readlink(%s);\n",path);
 
     redis_alive();
+    start[1] = clock();
     reply = redisCommand(_g_redis, "HGET %d%s:meta TARGET",depth,path);
-    
+    end[1] = clock();
+    time_check[9][1][1] = (time_check[9][1][0]*time_check[9][1][1] + (end[1] - start[1]))/(time_check[9][1][0]+1);
+    time_check[9][1][0] += 1;
+
     if((reply != NULL) &&(reply->type == REDIS_REPLY_STRING)&&(reply->str != NULL))
    {
 	   strcpy(buf, (char *)reply->str);
 	   freeReplyObject(reply);
+	       end[0] = clock();
+    time_check[9][0][1] = (time_check[9][0][0]*time_check[9][0][1] + (end[0] - start[0]))/(time_check[9][0][0]+1);
+    time_check[9][0][0] += 1;
+
 	   pthread_mutex_unlock(&_g_lock);
 	   return 0;
    }
     freeReplyObject(reply);
-    end = clock();
-    if(!time_check[9][1])
-    {
-    time_check[9][1] = 1;
-    time_check[9][0] = 0;
-    }
-    time_check[9][0] = (time_check[9][0]*time_check[9][1] + (end - start))/++time_check[9][1];
+
+    end[0] = clock();
+    time_check[9][0][1] = (time_check[9][0][0]*time_check[9][0][1] + (end[0] - start[0]))/(time_check[9][0][0]+1);
+    time_check[9][0][0] += 1;
+
+
     pthread_mutex_unlock(&_g_lock);
 
     return(-ENOENT);
@@ -697,19 +764,21 @@ fs_open(const char *path, struct fuse_file_info *fi)
 	fprintf(stderr, "fs_open(%s);\n", path);
 
     pthread_mutex_lock(&_g_lock);
-    start = clock();
+    start[0] = clock();
     int depth = get_depth(path);
-    
+    start[1] = clock();
     reply = redisCommand(_g_redis, "HSET %d%s:meta ATIME %d", depth, path, time(NULL));
+    end[1] = clock();
+    time_check[10][1][1] = (time_check[10][1][0]*time_check[10][1][1] + (end[1] - start[1]))/(time_check[10][1][0]+1);
+    time_check[10][1][0] += 1;
 
     freeReplyObject(reply);
-    end = clock();
-    if(!time_check[10][1])
-    {
-    time_check[10][1] = 1;
-    time_check[10][0] = 0;
-    }
-    time_check[10][0] = (time_check[10][0]*time_check[10][1] + (end - start))/++time_check[10][1];
+
+    end[0] = clock();
+    time_check[10][0][1] = (time_check[10][0][0]*time_check[10][0][1] + (end[0] - start[0]))/(time_check[10][0][0]+1);
+    time_check[10][0][0] += 1;
+
+
     pthread_mutex_unlock(&_g_lock);
 
     return 0;
@@ -721,7 +790,7 @@ fs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     redisReply *reply = NULL;
 
     pthread_mutex_lock(&_g_lock);
-    start = clock();
+    start[0] = clock();
 
     if (_g_debug)
 	fprintf(stderr, "fs_create(%s);\n", path);
@@ -736,18 +805,19 @@ fs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 
     char *entry = get_basename(path);
     int depth = get_depth(path);
-
+    start[1] = clock();
     redisAppendCommand(_g_redis, "HSET %d%s:meta NAME %s TYPE FILE MODE %d UID %d GID %d SIZE %d CTIME %d MTIME %d ATIME %d LINK 1", depth, path, entry, mode, fuse_get_context()->uid, fuse_get_context()->gid, 0, time(NULL), time(NULL), time(NULL));
+    end[1] = clock();
+    time_check[11][1][1] = (time_check[11][1][0]*time_check[11][1][1] + (end[1] - start[1]))/(time_check[11][1][0]+1);
+    time_check[11][1][0] += 1;
 
     redisGetReply(_g_redis, (void **)&reply);
     freeReplyObject(reply);
-    end = clock();
-    if(!time_check[11][1])
-    {
-    time_check[11][1] = 1;
-    time_check[11][0] = 0;
-    }
-    time_check[11][0] = (time_check[11][0]*time_check[11][1] + (end - start))/++time_check[11][1];
+
+    end[0] = clock();
+    time_check[11][0][1] = (time_check[11][0][0]*time_check[11][0][1] + (end[0] - start[0]))/(time_check[11][0][0]+1);
+    time_check[11][0][0] += 1;
+
 
     pthread_mutex_unlock(&_g_lock);
     return 0;
@@ -758,7 +828,7 @@ fs_chown(const char *path, uid_t uid, gid_t gid)
 {
     redisReply *reply = NULL;
     pthread_mutex_lock(&_g_lock);
-    start = clock();
+    start[0] = clock();
     if (_g_debug)
 	fprintf(stderr, "fs_chown(%s);\n", path);
 
@@ -771,17 +841,18 @@ fs_chown(const char *path, uid_t uid, gid_t gid)
     redis_alive();
     
     int depth = get_depth(path);
-
+    start[1] = clock();
     reply = redisCommand(_g_redis, "HSET %d%s:meta UID %d GID %d MTIME %d", depth, path, uid, gid, time(NULL));
+    end[1] = clock();
+    time_check[12][1][1] = (time_check[12][1][0]*time_check[12][1][1] + (end[1] - start[1]))/(time_check[12][1][0]+1);
+    time_check[12][1][0] += 1;
 
     freeReplyObject(reply);
-    end = clock();
-    if(!time_check[12][1])
-    {
-    time_check[12][1] = 1;
-    time_check[12][0] = 0;
-    }
-    time_check[12][0] = (time_check[12][0]*time_check[12][1] + (end - start))/++time_check[12][1];
+
+    end[0] = clock();
+    time_check[12][0][1] = (time_check[12][0][0]*time_check[12][0][1] + (end[0] - start[0]))/(time_check[12][0][0]+1);
+    time_check[12][0][0] += 1;
+
 
     pthread_mutex_unlock(&_g_lock);
     return 0;
@@ -793,7 +864,7 @@ fs_chmod(const char *path, mode_t mode)
     redisReply *reply = NULL;
 
     pthread_mutex_lock(&_g_lock);
-    start = clock();
+    start[0] = clock();
     if (_g_debug)
 	fprintf(stderr, "fs_chmod(%s);\n", path);
 
@@ -806,16 +877,18 @@ fs_chmod(const char *path, mode_t mode)
     redis_alive();
 
     int depth = get_depth(path);
-
+    start[1] = clock();
     reply = redisCommand(_g_redis, "HSET %d%s:meta MODE %d MTIME %d", depth, path, mode, time(NULL));
+    end[1] = clock();
+    time_check[13][1][1] = (time_check[13][1][0]*time_check[13][1][1] + (end[1] - start[1]))/(time_check[13][1][0]+1);
+    time_check[13][1][0] += 1;
+
     freeReplyObject(reply);
-    end = clock();
-    if(!time_check[13][1])
-    {
-    time_check[13][1] = 1;
-    time_check[13][0] = 0;
-    }
-    time_check[13][0] = (time_check[13][0]*time_check[13][1] + (end - start))/++time_check[13][1];
+
+    end[0] = clock();
+    time_check[13][0][1] = (time_check[13][0][0]*time_check[13][0][1] + (end[0] - start[0]))/(time_check[13][0][0]+1);
+    time_check[13][0][0] += 1;
+
 
     pthread_mutex_unlock(&_g_lock);
     return 0;
@@ -828,7 +901,7 @@ fs_unlink(const char *path)
 
     int depth=get_depth(path);
     pthread_mutex_lock(&_g_lock);
-    start = clock();
+    start[0] = clock();
     if(_g_debug) fprintf(stderr, "fs_unlink(%s);\n", path);
     if(_g_read_only)
     {
@@ -837,19 +910,25 @@ fs_unlink(const char *path)
      }
 
     redis_alive();
-
+    start[1] = clock();
     reply = redisCommand(_g_redis, "UNLINK %d%s:meta",depth,path);
     freeReplyObject(reply);
-    
+    end[1] = clock();
+    time_check[14][1][1] = (time_check[14][1][0]*time_check[14][1][1] + (end[1] - start[1]))/(time_check[14][1][0]+1);
+    time_check[14][1][0] += 1;
+
+    start[2] = clock();
     reply = redisCommand(_g_redis, "UNLINK %d%s:data",depth,path);
     freeReplyObject(reply);
-    end = clock();
-    if(!time_check[14][1])
-    {
-    time_check[14][1] = 1;
-    time_check[14][0] = 0;
-    }
-    time_check[14][0] = (time_check[14][0]*time_check[14][1] + (end - start))/++time_check[14][1];
+    end[2] = clock();
+    time_check[14][2][1] = (time_check[14][2][0]*time_check[14][2][1] + (end[2] - start[2]))/(time_check[14][2][0]+1);
+    time_check[14][2][0] += 1;
+
+
+
+    end[0] = clock();
+    time_check[14][0][1] = (time_check[14][0][0]*time_check[14][0][1] + (end[0] - start[0]))/(time_check[14][0][0]+1);
+    time_check[14][0][0] += 1;
 
     pthread_mutex_unlock(&_g_lock);
     return 0;
@@ -862,7 +941,7 @@ fs_utimens(const char *path, const struct timespec tv[2])
     redisReply *reply = NULL;
 
     pthread_mutex_lock(&_g_lock);
-    start = clock();
+    start[0] = clock();
     if (_g_debug)
 	fprintf(stderr, "fs_utimens(%s);\n", path);
 
@@ -875,17 +954,18 @@ fs_utimens(const char *path, const struct timespec tv[2])
     redis_alive();
 
     int depth = get_depth(path);
-
+    start[1] = clock();
     reply = redisCommand(_g_redis, "HSET %d%s:meta ATIME %d MTIME %d", depth, path, tv[0].tv_sec, tv[1].tv_sec);
+    end[1] = clock();
+    time_check[15][1][1] = (time_check[15][1][0]*time_check[15][1][1] + (end[1] - start[1]))/(time_check[15][1][0]+1);
+    time_check[15][1][0] += 1;
 
     freeReplyObject(reply);
-    end = clock();
-    if(!time_check[15][1])
-    {
-    time_check[15][1] = 1;
-    time_check[15][0] = 0;
-    }
-    time_check[15][0] = (time_check[15][0]*time_check[15][1] + (end - start))/++time_check[15][1];
+
+    end[0] = clock();
+    time_check[15][0][1] = (time_check[15][0][0]*time_check[15][0][1] + (end[0] - start[0]))/(time_check[15][0][0]+1);
+    time_check[15][0][0] += 1;
+
 
     pthread_mutex_unlock(&_g_lock);
     return 0;
@@ -900,19 +980,18 @@ fs_access(const char *path, int mode)
 	fprintf(stderr, "fs_access(%s);\n", path);
 
     pthread_mutex_lock(&_g_lock);
-    start = clock();
+    start[0] = clock();
     int depth = get_depth(path);
-
+    start[1] = clock();
     reply = redisCommand(_g_redis, "HSET %d%s:meta ATIME %d", depth, path, time(NULL));
+    end[1] = clock();
+    time_check[16][1][1] = (time_check[16][1][0]*time_check[16][1][1] + (end[1] - start[1]))/(time_check[16][1][0]+1);
+    time_check[16][1][0] += 1;
 
     freeReplyObject(reply);
-    end = clock();
-    if(!time_check[16][1])
-    {
-    time_check[16][1] = 1;
-    time_check[16][0] = 0;
-    }
-    time_check[16][0] = (time_check[16][0]*time_check[16][1] + (end - start))/++time_check[16][1];
+    end[0] = clock();
+    time_check[16][0][1] = (time_check[16][0][0]*time_check[16][0][1] + (end[0] - start[0]))/(time_check[16][0][0]+1);
+    time_check[16][0][0] += 1;
 
     pthread_mutex_unlock(&_g_lock);
     return 0;
@@ -961,7 +1040,7 @@ fs_truncate(const char *path, off_t size)
     int depth=get_depth(path);
 
     pthread_mutex_lock(&_g_lock);
-    start = clock();
+    start[0] = clock();
 
     if(_g_debug)
       fprintf(stderr,"fs_truncate(%s);\n",path);
@@ -977,17 +1056,23 @@ fs_truncate(const char *path, off_t size)
       pthread_mutex_unlock(&_g_lock);
       return -ENOENT;
     }
+
+    start[1] = clock();
     reply = redisCommand(_g_redis,"DEL %d%s:data",depth,path);
     freeReplyObject(reply);
-
+    end[1] = clock();
+    time_check[17][1][1] = (time_check[17][1][0]*time_check[17][1][1] + (end[1] - start[1]))/(time_check[17][1][0]+1);
+    time_check[17][1][0] += 1;
+    start[2] = clock();
     reply=redisCommand(_g_redis, "HSET %d%s:meta SIZE 0 MTIME %d",depth,path, time(NULL));
-    end = clock();
-    if(!time_check[17][1])
-    {
-    time_check[17][1] = 1;
-    time_check[17][0] = 0;
-    }
-    time_check[17][0] = (time_check[17][0]*time_check[17][1] + (end - start))/++time_check[17][1];
+    freeReplyObject(reply);
+    end[2] = clock();
+    time_check[17][2][1] = (time_check[17][2][0]*time_check[17][2][1] + (end[2] - start[2]))/(time_check[17][2][0]+1);
+    time_check[17][2][0] += 1;
+
+    end[0] = clock();
+    time_check[17][0][1] = (time_check[17][0][0]*time_check[17][0][1] + (end[0] - start[0]))/(time_check[17][0][0]+1);
+    time_check[17][0][0] += 1;
 
     pthread_mutex_unlock(&_g_lock);
     return 0;

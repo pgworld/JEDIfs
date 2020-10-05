@@ -30,11 +30,13 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "fmacros.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <assert.h>
+#include <limits.h>
 #include "sds.h"
 #include "sdsalloc.h"
 
@@ -219,10 +221,7 @@ sds sdsMakeRoomFor(sds s, size_t addlen) {
     hdrlen = sdsHdrSize(type);
     if (oldtype==type) {
         newsh = s_realloc(sh, hdrlen+newlen+1);
-        if (newsh == NULL) {
-            s_free(sh);
-            return NULL;
-        }
+        if (newsh == NULL) return NULL;
         s = (char*)newsh+hdrlen;
     } else {
         /* Since the header size changes, need to move the string forward,
@@ -715,15 +714,20 @@ sds sdstrim(sds s, const char *cset) {
  *
  * The string is modified in-place.
  *
+ * Return value:
+ * -1 (error) if sdslen(s) is larger than maximum positive ssize_t value.
+ *  0 on success.
+ *
  * Example:
  *
  * s = sdsnew("Hello World");
  * sdsrange(s,1,-1); => "ello World"
  */
-void sdsrange(sds s, int start, int end) {
+int sdsrange(sds s, ssize_t start, ssize_t end) {
     size_t newlen, len = sdslen(s);
+    if (len > SSIZE_MAX) return -1;
 
-    if (len == 0) return;
+    if (len == 0) return 0;
     if (start < 0) {
         start = len+start;
         if (start < 0) start = 0;
@@ -734,9 +738,9 @@ void sdsrange(sds s, int start, int end) {
     }
     newlen = (start > end) ? 0 : (end-start)+1;
     if (newlen != 0) {
-        if (start >= (signed)len) {
+        if (start >= (ssize_t)len) {
             newlen = 0;
-        } else if (end >= (signed)len) {
+        } else if (end >= (ssize_t)len) {
             end = len-1;
             newlen = (start > end) ? 0 : (end-start)+1;
         }
@@ -746,6 +750,7 @@ void sdsrange(sds s, int start, int end) {
     if (start && newlen) memmove(s, s+start, newlen);
     s[newlen] = 0;
     sdssetlen(s,newlen);
+    return 0;
 }
 
 /* Apply tolower() to every character of the sds string 's'. */

@@ -1,8 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
 #include <hiredis.h>
+
+#ifdef _MSC_VER
+#include <winsock2.h> /* For struct timeval */
+#endif
 
 int main(int argc, char **argv) {
     unsigned int j, isunix = 0;
@@ -22,10 +25,8 @@ int main(int argc, char **argv) {
 
     struct timeval timeout = { 1, 500000 }; // 1.5 seconds
     if (isunix) {
-	    printf("!!!\n");
         c = redisConnectUnixWithTimeout(hostname, timeout);
     } else {
-	    printf("@@@\n");
         c = redisConnectWithTimeout(hostname, port, timeout);
     }
     if (c == NULL || c->err) {

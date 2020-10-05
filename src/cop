@@ -558,10 +558,7 @@ redis_alive()
      */
     if (_g_redis != NULL)
     {
-		char rediscom[1000];
-		sprintf(rediscom, "ping");
-		printf("to enqueue(%s)\n", rediscom);
-		reply = redisCommand(_g_redis, "%s", rediscom);
+	reply = redisCommand(_g_redis, "ping");
 
 	if ((reply != NULL) &&
 		(reply->str != NULL) && (strcmp(reply->str, "PONG") == 0)){
@@ -770,10 +767,9 @@ fs_getattr(const char *path, struct stat *stbuf)
     }
 
     int depth = get_depth(path);
-	char rediscom[1000];
+
     reply = redisCommand(_g_redis, "EXISTS %d%s:meta", depth, path);
-	sprintf(rediscom, "EXISTS %d%s:meta\n", depth, path);
-	
+
     if (reply->integer == 0)
     {
 	path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
@@ -782,9 +778,9 @@ fs_getattr(const char *path, struct stat *stbuf)
     }
 
     freeReplyObject(reply);
-	
+
     redisAppendCommand(_g_redis, "HMGET %d%s:meta CTIME ATIME MTIME GID UID LINK", depth, path);
-	sprintf(rediscom, "HMGET %d%s:meta CTIME ATIME MTIME GID UID LINK\n", depth, path);
+
     redisGetReply(_g_redis, (void **)&reply);
     if ((reply->element[0] != NULL)
         && (reply->element[0]->type == REDIS_REPLY_STRING))
@@ -810,7 +806,7 @@ fs_getattr(const char *path, struct stat *stbuf)
     freeReplyObject(reply);
 
     reply = redisCommand(_g_redis, "HMGET %d%s:meta TYPE MODE SIZE", depth, path);
-	sprintf(rediscom, "HMGET %d%s:meta TYPE MODE SIZE\n", depth, path);
+
     if ((reply != NULL) && (reply->element[0] != NULL)
         && (reply->element[0]->type == REDIS_REPLY_STRING))
     {

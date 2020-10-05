@@ -13,11 +13,9 @@
 #include <errno.h>
 #include <unistd.h>
 #include <getopt.h>
-#include <semaphore.h>
 
 redisReply *reply;
 
-pthread_t lock_th[1000];
 int _g_redis_port = 6379;
 char _g_redis_host[100] = { "127.0.0.1" };
 int _g_debug = 1;
@@ -33,24 +31,10 @@ int _g_test = 1;
 // Connecting
 redisContext *_g_redis = NULL;
 
-
-void up(sem_t *sem)
-{
-        if(sem_post(sem)<0){
-                printf("UP ERROR");
-        }
-}
-
-void down(sem_t *sem)
-{
-        if(sem_wait(sem)<0){
-                printf("DOWN ERROR");
-        }
-}
-
 /*
  * rbtree
  */
+
 enum node_color
 {
 	RED,
@@ -66,42 +50,31 @@ enum lock_states
 struct node_t
 {
 	const char *data;
-	int color;
-	sem_t file_lock; 
+	int color, lock_state;
 	struct node_t *link[2];
 };
 
 struct node_t *root = NULL;
 
-/**
- * Create a red-black tree
- *
- */
 struct node_t *create_node(char *inp)
 {
 	struct node_t *new_node;
 	new_node = (struct node_t *)malloc(sizeof(struct node_t));
 	(new_node->data) = inp;
 	new_node -> color = RED;
-	sem_init(&(new_node->file_lock), 0, 2);
+	new_node -> lock_state = UNLOCKED;
 	new_node -> link[0] = new_node -> link[1] = NULL;
 	return new_node;
 }
 
-/**
- * Insert a node
- *
- */
-void insertion(char *inp, pthread_mutex_t _t_lock)
+void insertion(char *inp)
 {
-	pthread_mutex_lock(&_t_lock);
 	struct node_t *stack[98], *ptr, *newnode, *xPtr, *yPtr;
 	int dir[98], ht = 0, index;
 	ptr = root;
 	if(!root)
 	{
 		root = create_node(inp);
-		pthread_mutex_unlock(&_t_lock);
 		return;
 	}
 
@@ -112,7 +85,6 @@ void insertion(char *inp, pthread_mutex_t _t_lock)
 	{
 		if(strcmp(inp, ptr->data) == 0)
 		{
-			pthread_mutex_unlock(&_t_lock);
 			return;
 		}
 		index = (strcmp(inp, ptr->data)) > 0 ? 1 : 0;
@@ -205,17 +177,11 @@ void insertion(char *inp, pthread_mutex_t _t_lock)
 		}
 	}
 	root -> color = BLACK;
-	pthread_mutex_unlock(&_t_lock);
 }
 
-/**
- * Delete a node
- *
- */
-void deletion(char *data, pthread_mutex_t _t_lock)
+void deletion(char *data)
 {
 	printf("delete %s from tree\n", data);
-	pthread_mutex_lock(&_t_lock);
 	struct node_t *stack[98], *ptr, *xPtr, *yPtr;
 	struct node_t *pPtr, *qPtr, *rPtr;
 	int dir[98], ht = 0, diff, i;
@@ -223,7 +189,6 @@ void deletion(char *data, pthread_mutex_t _t_lock)
 
 	if (!root)
 	{
-		pthread_mutex_unlock(&_t_lock);
 		return;
 	}
 
@@ -312,7 +277,6 @@ void deletion(char *data, pthread_mutex_t _t_lock)
 
 	if (ht < 1)
 	{
-		pthread_mutex_unlock(&_t_lock);
 		return;
 	}
 
@@ -454,18 +418,12 @@ void deletion(char *data, pthread_mutex_t _t_lock)
 				}
 			}
 			ht--;
-			pthread_mutex_unlock(&_t_lock);
 		}
 	}
 }
 
-/**
- * Print the inorder traversal of the tree
- *
- */
 struct node_t *tree_search(char *data)
-{
-	printf("tree_search(%s)\n", data);	
+{	
     struct node_t *stack[98], *ptr, *xPtr, *yPtr;
     struct node_t *pPtr, *qPtr, *rPtr;
     int dir[98], ht = 0, diff, i;
@@ -473,7 +431,6 @@ struct node_t *tree_search(char *data)
 
     if (!root)
     {
-		printf("tree_search end\n");
         return NULL;
     }
 
@@ -481,70 +438,75 @@ struct node_t *tree_search(char *data)
     while (ptr != NULL)
     {
         if(strcmp(data, ptr->data) == 0)
-		{
-			printf("tree_search end\n");
 			return ptr;
-		}
         diff = strcmp(data, ptr->data) > 0 ? 1 : 0;
         stack[ht] = ptr;
         dir[ht++] = diff;
         ptr = ptr->link[diff];
     }
-	printf("tree_search end\n");
 	return NULL;
 }
 
-void path_lock(char *data, pthread_mutex_t _t_lock)
+void path_lock(char *data)
 {
-	pthread_mutex_lock(&_t_lock);
-	if(!tree_search(data))
+	printf("try path_lock(%s)\n", data);
+	int j = 0;
+	if(tree_search(data) == NULL)
 	{
-		pthread_mutex_unlock(&_t_lock);
 		insertion(data, _t_lock);
-		pthread_mutex_lock(&_t_lock);
 	}
-	down(&(tree_search(data)->file_lock));
-	pthread_mutex_unlock(&_t_lock);
+	printf("---------------\nbefore path_lock: %d\n", tree_search(data)->lock_state);
+	while(tree_search(data)->lock_state == LOCKED)
+	{
+		if(j > 10000000)
+		{
+			printf("someting wrong!\n");
+			exit(1);
+			break;
+		}
+		j++;
+	}
+	printf("path_lock(%s)\n", data);
+	if(tree_search(data)->lock_state == LOCKED)
+	{
+		return path_lock(data, _t_lock);
+	}
+	else tree_search(data)->lock_state = LOCKED;
+	printf("---------------\nafter path_lock: %d\n", tree_search(data)->lock_state);
+
 }
 
-void path_unlock(char *data, pthread_mutex_t _t_lock)
+void path_unlock(char *data)
 {
-	pthread_mutex_lock(&_t_lock);
-	up(&(tree_search(data)->file_lock));
-	pthread_mutex_unlock(&_t_lock);
+	printf("---------------\nbefore path_unlock: %d\n", tree_search(data)->lock_state);
+	printf("path_unlock(%s)\n", data);
+	if(tree_search(data)&&tree_search(data)->lock_state == LOCKED)
+        tree_search(data)->lock_state = UNLOCKED;
 }
 
-/*
-int check_lock(char *data, pthread_mutex_t _t_lock)
+int check_lock(char *data)
 {
-	pthread_mutex_lock(&_t_lock);
 	if(tree_search(data))
 	{
 		if(tree_search(data)->lock_state == LOCKED) 
 		{
-			pthread_mutex_unlock(&_t_lock);
 			return 1;
 		}
 		else if(tree_search(data)->lock_state == UNLOCKED)
 		{	
-			pthread_mutex_unlock(&_t_lock);
 			return 0;
 		}
 		else
 		{
-			pthread_mutex_unlock(&_t_lock);
 			printf("--------------------\nsomething wrong to lock\n---------------\n");
 			return 0;
 		}	
 	}
 	else
 	{
-		pthread_mutex_unlock(&_t_lock);
 		return 0;
 	}
 }
-*/
-
 
 
 void
@@ -558,10 +520,7 @@ redis_alive()
      */
     if (_g_redis != NULL)
     {
-		char rediscom[1000];
-		sprintf(rediscom, "ping");
-		printf("to enqueue(%s)\n", rediscom);
-		reply = redisCommand(_g_redis, "%s", rediscom);
+	reply = redisCommand(_g_redis, "ping");
 
 	if ((reply != NULL) &&
 		(reply->str != NULL) && (strcmp(reply->str, "PONG") == 0)){
@@ -659,7 +618,7 @@ fs_init()
     pthread_mutex_init(&_g_lock, NULL);
     redis_alive();
 	char* base = "/";
-	insertion(base, _g_lock); 
+	//insertion(base, _g_lock); 
 
     return 0;
 }
@@ -706,7 +665,8 @@ fs_readdir(const char *path,
     redisReply *reply = NULL;
     redisReply *subreply = NULL;
     int i;
-    path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+
+    path_lock(path);//pthread_mutex_lock(&_g_lock);
 
     if (_g_debug)
 	fprintf(stderr, "fs_readdir(%s)\n", path);
@@ -735,7 +695,7 @@ fs_readdir(const char *path,
     freeReplyObject(reply);
     freeReplyObject(subreply);
 
-    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
     return 0;
 }
 
@@ -744,7 +704,7 @@ fs_getattr(const char *path, struct stat *stbuf)
 {
     redisReply *reply = NULL;
 
-    path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+    path_lock(path);//pthread_mutex_lock(&_g_lock);
 
     if (_g_debug)
         fprintf(stderr, "fs_getattr(%s);\n", path);
@@ -764,27 +724,26 @@ fs_getattr(const char *path, struct stat *stbuf)
         stbuf->st_mode = S_IFDIR | 0755;
         stbuf->st_nlink = 1;
 
-        path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+        path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 
 	return 0;
     }
 
     int depth = get_depth(path);
-	char rediscom[1000];
+
     reply = redisCommand(_g_redis, "EXISTS %d%s:meta", depth, path);
-	sprintf(rediscom, "EXISTS %d%s:meta\n", depth, path);
-	
+
     if (reply->integer == 0)
     {
-	path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+	path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 	freeReplyObject(reply);
 	return -ENOENT;
     }
 
     freeReplyObject(reply);
-	
+
     redisAppendCommand(_g_redis, "HMGET %d%s:meta CTIME ATIME MTIME GID UID LINK", depth, path);
-	sprintf(rediscom, "HMGET %d%s:meta CTIME ATIME MTIME GID UID LINK\n", depth, path);
+
     redisGetReply(_g_redis, (void **)&reply);
     if ((reply->element[0] != NULL)
         && (reply->element[0]->type == REDIS_REPLY_STRING))
@@ -810,7 +769,7 @@ fs_getattr(const char *path, struct stat *stbuf)
     freeReplyObject(reply);
 
     reply = redisCommand(_g_redis, "HMGET %d%s:meta TYPE MODE SIZE", depth, path);
-	sprintf(rediscom, "HMGET %d%s:meta TYPE MODE SIZE\n", depth, path);
+
     if ((reply != NULL) && (reply->element[0] != NULL)
         && (reply->element[0]->type == REDIS_REPLY_STRING))
     {
@@ -851,7 +810,7 @@ fs_getattr(const char *path, struct stat *stbuf)
     freeReplyObject(reply);
 
 
-    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 
     return 0;
 }
@@ -860,15 +819,15 @@ static int
 fs_mkdir(const char *path, mode_t mode)
 {
     redisReply *reply = NULL;
-    insertion(path, _g_lock);
-    path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+    //insertion(path, _g_lock);
+    path_lock(path);//pthread_mutex_lock(&_g_lock);
 
     if (_g_debug)
 	fprintf(stderr, "fs_mkdir(%s);\n", path);
 
     if (_g_read_only)
     {
-	path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+	path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 	//deletion(path, _g_lock);
 	return -EPERM;
     }
@@ -884,7 +843,7 @@ fs_mkdir(const char *path, mode_t mode)
     freeReplyObject(reply);
     
     free(entry);
-    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
     return 0;
 }
 
@@ -905,14 +864,14 @@ fs_rmdir(const char *path)
 {
     redisReply *reply = NULL;
 
-    path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+    path_lock(path);//pthread_mutex_lock(&_g_lock);
 
     if (_g_debug)
 	fprintf(stderr, "fs_rmdir(%s);\n", path);
 
     if (_g_read_only)
     {
-	path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+	path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 	return -EPERM;
     }
 
@@ -920,14 +879,14 @@ fs_rmdir(const char *path)
 	printf("is_dir start/n");
     if (!is_directory(path))
     {
-	path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+	path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 	return -ENOENT;
     }
 
 
     if (count_dir_ent(path))
     {
-	path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+	path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 	return -ENOTEMPTY;
     }
     
@@ -937,7 +896,7 @@ fs_rmdir(const char *path)
 
     freeReplyObject(reply);
 
-    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
     return 0;
 }
 
@@ -948,14 +907,14 @@ fs_write(const char *path,
 {
     redisReply *reply = NULL;
 
-    path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+    path_lock(path);//pthread_mutex_lock(&_g_lock);
 
     if (_g_debug)
 	fprintf(stderr, "fs_write(%s);\n", path);
 
     if (_g_read_only)
     {
-	path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+	path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 	return -EPERM;
     }
 
@@ -1007,7 +966,7 @@ fs_write(const char *path,
 	free(mem);
     }
 
-    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
     return size;
 }
 
@@ -1018,7 +977,7 @@ fs_read(const char *path, char *buf, size_t size, off_t offset,
     redisReply *reply = NULL;
     size_t sz;
 
-    path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+    path_lock(path);//pthread_mutex_lock(&_g_lock);
 
     if (_g_debug)
         fprintf(stderr, "fs_read(%s);\n", path);
@@ -1051,26 +1010,26 @@ fs_read(const char *path, char *buf, size_t size, off_t offset,
 
     freeReplyObject(reply);
 
-    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
     return size;
 }
 
 static int
 fs_symlink(const char *target, const char *path)
 {
-	insertion(path, _g_lock);
+	//insertion(path, _g_lock);
     redisReply *reply =NULL;
     int depth =get_depth(path);
     char *entry =get_basename(path);
 
-    path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+    path_lock(path);//pthread_mutex_lock(&_g_lock);
 
     if (_g_debug)
 	    fprintf(stderr,"fs_symlink(target:%s -> %s);\n", target, path);
 
     if(_g_read_only)
     {
-	    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+	    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 	    //deletion(path, _g_lock);
 	    return -EPERM;
     }
@@ -1097,7 +1056,7 @@ for (i = 0; i < 11; i++)
 }
     free(entry);
     
-    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
     return 0;
 }
 
@@ -1105,7 +1064,7 @@ static int
 fs_readlink(const char *path, char *buf, size_t size)
 {
     redisReply *reply =NULL;
-    path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+    path_lock(path);//pthread_mutex_lock(&_g_lock);
 
     int depth=get_depth(path);
 
@@ -1119,11 +1078,11 @@ fs_readlink(const char *path, char *buf, size_t size)
    {
 	   strcpy(buf, (char *)reply->str);
 	   freeReplyObject(reply);
-	   path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+	   path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 	   return 0;
    }
     freeReplyObject(reply);
-    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 
     return(-ENOENT);
 }
@@ -1136,13 +1095,13 @@ fs_open(const char *path, struct fuse_file_info *fi)
     if (_g_debug)
 	fprintf(stderr, "fs_open(%s);\n", path);
 
-    path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+    path_lock(path);//pthread_mutex_lock(&_g_lock);
     int depth = get_depth(path);
     
     reply = redisCommand(_g_redis, "HSET %d%s:meta ATIME %d", depth, path, time(NULL));
 
     freeReplyObject(reply);
-    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 
     return 0;
 }
@@ -1150,17 +1109,17 @@ fs_open(const char *path, struct fuse_file_info *fi)
 static int
 fs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
-    insertion(path, _g_lock);
+    //insertion(path, _g_lock);
     redisReply *reply = NULL;
 
-    path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+    path_lock(path);//pthread_mutex_lock(&_g_lock);
 
     if (_g_debug)
 	fprintf(stderr, "fs_create(%s);\n", path);
 
     if (_g_read_only)
     {
-	path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+	path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 	//deletion(path, _g_lock);
 	return -EPERM;
     }
@@ -1176,7 +1135,7 @@ fs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     redisGetReply(_g_redis, (void **)&reply);
     freeReplyObject(reply);
 
-    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
     return 0;
 }
 
@@ -1190,7 +1149,7 @@ fs_chown(const char *path, uid_t uid, gid_t gid)
 
     if (_g_read_only)
     {
-	path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+	path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 	return -EPERM;
     }
     
@@ -1202,7 +1161,7 @@ fs_chown(const char *path, uid_t uid, gid_t gid)
 
     freeReplyObject(reply);
 
-    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
     return 0;
 }
 
@@ -1211,14 +1170,14 @@ fs_chmod(const char *path, mode_t mode)
 {
     redisReply *reply = NULL;
 
-    path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+    path_lock(path);//pthread_mutex_lock(&_g_lock);
 
     if (_g_debug)
 	fprintf(stderr, "fs_chmod(%s);\n", path);
 
     if (_g_read_only)
     {
-	path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+	path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 	return -EPERM;
     }
 
@@ -1228,7 +1187,7 @@ fs_chmod(const char *path, mode_t mode)
 
     reply = redisCommand(_g_redis, "HSET %d%s:meta MODE %d MTIME %d", depth, path, mode, time(NULL));
     freeReplyObject(reply);
-    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
     return 0;
 }
 
@@ -1238,11 +1197,11 @@ fs_unlink(const char *path)
     redisReply *reply =NULL;
 
     int depth=get_depth(path);
-    path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+    path_lock(path);//pthread_mutex_lock(&_g_lock);
     if(_g_debug) fprintf(stderr, "fs_unlink(%s);\n", path);
     if(_g_read_only)
     {
-	path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+	path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 	return -EPERM;
      }
 
@@ -1255,7 +1214,7 @@ fs_unlink(const char *path)
     reply = redisCommand(_g_redis, "UNLINK %d%s:data",depth,path);
     freeReplyObject(reply);
 
-    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
     //deletion(path, _g_lock);
     return 0;
 
@@ -1266,14 +1225,14 @@ fs_utimens(const char *path, const struct timespec tv[2])
 {
     redisReply *reply = NULL;
 
-    path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+    path_lock(path);//pthread_mutex_lock(&_g_lock);
 
     if (_g_debug)
 	fprintf(stderr, "fs_utimens(%s);\n", path);
 
     if (_g_read_only)
     {
-	path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+	path_unlock(path);//pthread_mutex_unlock(&_g_lock);
 	return -EPERM;
     }
 
@@ -1285,7 +1244,7 @@ fs_utimens(const char *path, const struct timespec tv[2])
 
     freeReplyObject(reply);
 
-    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
     return 0;
 }
 
@@ -1297,7 +1256,7 @@ fs_access(const char *path, int mode)
     if (_g_debug)
 	fprintf(stderr, "fs_access(%s);\n", path);
 
-    path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+    path_lock(path);//pthread_mutex_lock(&_g_lock);
 
     int depth = get_depth(path);
 
@@ -1305,7 +1264,7 @@ fs_access(const char *path, int mode)
 
     freeReplyObject(reply);
     
-    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
     return 0;
 }
 	
@@ -1316,11 +1275,11 @@ fs_rename(const char *old, const char *path)
 {
    /* redisReply *reply =NULL;
     int depth=get_depth(path);
-    path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+    path_lock(path);//pthread_mutex_lock(&_g_lock);
     if(_g_debug)
       fprintf(stderr,"fs_rename(%s,%s);\n",old, path);
     if(_g_read_only)
-    {path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    {path_unlock(path);//pthread_mutex_unlock(&_g_lock);
      return -EPERM;
     }
     redis_alive();
@@ -1340,20 +1299,20 @@ fs_truncate(const char *path, off_t size)
     redisReply *reply =NULL;
     int depth=get_depth(path);
 
-    path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+    path_lock(path);//pthread_mutex_lock(&_g_lock);
 
     if(_g_debug)
       fprintf(stderr,"fs_truncate(%s);\n",path);
 
     if(_g_read_only)
     {
-      path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+      path_unlock(path);//pthread_mutex_unlock(&_g_lock);
       return -EPERM;
     }
 
     if(is_directory(path))
    {
-      path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+      path_unlock(path);//pthread_mutex_unlock(&_g_lock);
       return -ENOENT;
     }
     reply = redisCommand(_g_redis,"DEL %d%s:data",depth,path);
@@ -1361,7 +1320,7 @@ fs_truncate(const char *path, off_t size)
 
     reply=redisCommand(_g_redis, "HSET %d%s:meta SIZE 0 MTIME %d",depth,path, time(NULL));
 
-    path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
+    path_unlock(path);//pthread_mutex_unlock(&_g_lock);
     return 0;
 }
 

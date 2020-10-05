@@ -32,7 +32,7 @@ install: all
 
 refresh:
 	rm -rf ./hiredis/
-	git clone https://github.com/antirez/hiredis.git
+	git clone https://github.com/redis/hiredis.git
 	rm -rf ./hiredis/.git*
 
 #

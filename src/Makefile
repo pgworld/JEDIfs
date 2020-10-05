@@ -52,6 +52,7 @@ clean:
 #  Install the binary
 #
 install:
+	redis-server --daemonize yes
 	mkdir -p $(prefix)/sbin
 	cp ./jedifs $(prefix)/sbin/
 
