@@ -34,35 +34,18 @@ int _g_test = 1;
 redisContext *_g_redis = NULL;
 
 
-void up(sem_t *sem)
-{
-        if(sem_post(sem)<0){
-                printf("UP ERROR");
-        }
-}
-
-void down(sem_t *sem)
-{
-        if(sem_wait(sem)<0){
-                printf("DOWN ERROR");
-        }
-}
-
-/*
  * rbtree
- */
 enum node_color
 {
 	RED,
-	BLACK
+	BLACK,
 };
 
 enum lock_states
 {
 	LOCKED,
-	UNLOCKED
+	UNLOCKED,
 };
-
 struct node_t
 {
 	const char *data;
@@ -547,6 +530,197 @@ int check_lock(char *data, pthread_mutex_t _t_lock)
 
 
 
+typedef struct Node
+{
+        int data;
+        struct Node*next;
+}Node;
+
+typedef struct Queue
+{
+        Node * front;
+        Node *rear;
+        int count;
+}Queue;
+
+void InitQueue(Queue *queue);
+int IsEmpty(Queue *queue);
+void Enqueue(Queue *queue, int data);
+int Dequeue(Queue *queue);
+
+
+void InitQueue(Queue *queue)
+{
+        queue->front = NULL;
+        queue->rear = NULL;
+        queue->count =  0;  
+}
+
+
+int IsEmpty(Queue *queue)
+{
+        return queue->count ==0;
+}
+
+void Enqueue(Queue *queue, int data)
+{
+        Node *now=(Node *)malloc(sizeof(Node));
+        now->data = data;
+        now->next = NULL;
+
+        if(IsEmpty(queue))
+        {
+                queue-> front = now;
+        }
+        else
+        {
+                queue->rear->next=now;
+        }
+        queue->rear = now;
+        queue->count++;
+}
+
+
+int Dequeue(Queue *queue)
+{
+        int re =0;
+        Node *now;
+
+        down(&item);
+        pthread_mutex_lock(&mutex_lock);
+
+        //if (IsEmpty(queue))
+        //{
+        //        return re;
+        //}
+        now = queue->front;
+        re=now->data;
+        queue->front = now->next;
+        free(now);
+        queue->count--;
+
+	pthread_mutex_unlock(&mutex_lock);
+	up(&space);
+
+        return re;
+}
+
+int IsFull(Queue *queue)
+{
+        return queue->count ==50;
+}
+
+
+
+
+pthread_mutex_t mutex_lock;
+sem_t item;
+sem_t space;
+Queue *thisqueue;
+int this_space =0;
+int queue_limit = 50;
+
+
+
+
+
+void down(sem_t *sem)
+{
+        if(sem_wait(sem)<0){
+                printf("DOWN ERROR");
+
+        }
+
+}
+
+void up(sem_t *sem)
+{
+        if(sem_post(sem)<0){
+                printf("UP ERROR");
+        }
+
+}
+
+
+
+void *consumer(data){
+	char *comm;
+	while(1) {
+		if ( (comm = Dequeue()) == NULL) {
+			continue;
+		}
+		redisCommand(comm);
+	}
+        for( int i=0 ; i<10000;i++){
+                down(&item);
+                pthread_mutex_lock(&mutex_lock);
+		
+		data= Dequeue(thisqueue);
+                reply = redisCommand(_g_redis, data);
+                pthread_mutex_lock(&mutex_lock);
+                up(&space);
+
+        }
+
+
+
+}
+
+
+
+void *producer(){
+        for (int i=0; i<20000;i++){
+                down(&space);
+                pthread_mutex_lock(&mutex_lock);
+
+                this_space++;
+                if(this_space == queue_limit){
+                        printf("queue is full");
+                        exit(0);
+                }
+                pthread_mutex_lock(&mutex_lock);
+                up(&item);
+        }
+}
+
+
+
+void s_init(void)
+{
+        sem_init(&item , 0, 0);
+        sem_init(&space,0,50);
+}
+
+int Q_main(){
+        pthread_t p_thread[15];
+        thisqueue=(Queue*)malloc(sizeof(Queue));
+        InitQueue(thisqueue);
+        s_init();
+        pthread_mutex_init(&mutex_lock, NULL);
+
+        for(int i=0; i<15; i++){
+                if(i%3==0)
+                {
+                        pthread_create(&p_thread[i],NULL,producer,(void *)rediscom);
+
+                }
+                else{
+                        pthread_create(&p_thread[i],NULL,consumer,(void *)rediscom);
+                }
+        }
+
+        for (int i=0; i<15; i++)
+                pthread_join(p_thread[i], NULL);
+
+        free(thisqueue);
+
+        return 0;
+
+
+}
+
+
+
 void
 redis_alive()
 {
@@ -672,10 +846,17 @@ fs_destroy()
     pthread_mutex_destroy(&_g_lock);
 }
 
+struct j_req {
+	pthread_cond_wait *wait;
+	redisReply *reply;
+	char *comm;
+};
+
 int
 is_directory(const char *path)
 {
     int ret = 0;
+    struct j_req *req;
     redisReply *reply = NULL;
 
     if (_g_debug)
@@ -688,8 +869,10 @@ is_directory(const char *path)
 	char rediscom[1000];
 	sprintf(rediscom, "EXISTS %d%s:data", depth, path);
 	printf("to enqueue(%s)\n", rediscom);
-    reply = redisCommand(_g_redis, "%s", rediscom);
-
+    //reply = redisCommand(_g_redis, "%s", rediscom);
+	prepare_request(&req, &reply, rediscom, &wait);
+enqueue(req);
+sleep(); // pthread_cond_wait(&wait,&mutex);  <-- Jang (pthread_cond_signal(&wait));
     if (reply->integer == 0)
 	ret = 1;
 
