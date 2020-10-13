@@ -34,7 +34,7 @@ int _g_test = 1;
 redisContext *_g_redis = NULL;
 
 
- * rbtree
+// * rbtree
 enum node_color
 {
 	RED,
@@ -75,8 +75,9 @@ struct node_t *create_node(char *inp)
  * Insert a node
  *
  */
-void insertion(char *inp, pthread_mutex_t _t_lock)
+void insertion(const char *inp_t, pthread_mutex_t _t_lock)
 {
+	char *inp = (char *) inp_t;
 	pthread_mutex_lock(&_t_lock);
 	struct node_t *stack[98], *ptr, *newnode, *xPtr, *yPtr;
 	int dir[98], ht = 0, index;
@@ -446,13 +447,14 @@ void deletion(char *data, pthread_mutex_t _t_lock)
  * Print the inorder traversal of the tree
  *
  */
-struct node_t *tree_search(char *data)
+struct node_t *tree_search(const char *data_t)
 {
+	char *data = (char *) data_t;
 	printf("tree_search(%s)\n", data);	
     struct node_t *stack[98], *ptr, *xPtr, *yPtr;
     struct node_t *pPtr, *qPtr, *rPtr;
     int dir[98], ht = 0, diff, i;
-    enum node_color color;
+//    enum node_color color;
 
     if (!root)
     {
@@ -477,8 +479,9 @@ struct node_t *tree_search(char *data)
 	return NULL;
 }
 
-void path_lock(char *data, pthread_mutex_t _t_lock)
+void path_lock(const char *data_t, pthread_mutex_t _t_lock)
 {
+	char *data = (char *) data_t;
 	pthread_mutex_lock(&_t_lock);
 	if(!tree_search(data))
 	{
@@ -490,8 +493,9 @@ void path_lock(char *data, pthread_mutex_t _t_lock)
 	pthread_mutex_unlock(&_t_lock);
 }
 
-void path_unlock(char *data, pthread_mutex_t _t_lock)
+void path_unlock(const char *data_t, pthread_mutex_t _t_lock)
 {
+	char *data = (char *) data_t;
 	pthread_mutex_lock(&_t_lock);
 	up(&(tree_search(data)->file_lock));
 	pthread_mutex_unlock(&_t_lock);
