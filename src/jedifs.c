@@ -1,4 +1,4 @@
-#define FUSE_USE_VERSION 26
+#define FUSE_USE_VERSION 27
 #define D_FILE_OFFSET_BITS = 64
 #include <fuse.h>
 #include <hiredis.h>
@@ -593,14 +593,10 @@ int Dequeue(Queue *queue)
         down(&item);
         pthread_mutex_lock(&mutex_lock);
 
-        //if (IsEmpty(queue))
-        //{
-        //        return re;
-        //}
         now = queue->front;
         re=now->data;
-        queue->front = now->next;
-        free(now);
+	queue->front = now->next;
+	free(now);
         queue->count--;
 
 	pthread_mutex_unlock(&mutex_lock);
@@ -645,15 +641,31 @@ void up(sem_t *sem)
 
 }
 
+struct redis_comm_req {
+	char *comm;
+	redis_reply *reply;
+	pthread_cond_t *cond;
+	pthread_mutex *mutex;
+};
 
 
 void *consumer(data){
+	struct redis_comm_req *req;
 	char *comm;
 	while(1) {
-		if ( (comm = Dequeue()) == NULL) {
+		if ( (req = Dequeue()) == NULL) {
 			continue;
 		}
-		redisCommand(comm);
+		if (stop) {
+			break;
+		}
+		comm = req->comm;
+		// req->reply = redisCommand(comm); communicate with redis 
+		if (req->cond) {
+			pthread_mutex_lock(req->mutex);
+			pthread_cond_signal(req->cond, req->mutex);
+			pthread_mutex_unlock(req->mutex);
+		}
 	}
         for( int i=0 ; i<10000;i++){
                 down(&item);
@@ -839,6 +851,8 @@ fs_init()
 	char* base = "/";
 	insertion(base, _g_lock); 
 
+    // init & run consumer
+
     return 0;
 }
 
@@ -848,6 +862,8 @@ fs_destroy()
     if (_g_debug)
 	fprintf(stderr, "fs_destroy()\n");
     pthread_mutex_destroy(&_g_lock);
+
+    // stop & destroy consumer
 }
 
 struct j_req {
@@ -893,7 +909,11 @@ fs_readdir(const char *path,
     redisReply *reply = NULL;
     redisReply *subreply = NULL;
     int i;
+    struct redis_comm_req redis_req;
+    pthread_cond_t cond; // init
+    pthread_mutex_t mutex; // init
     path_lock(path, _g_lock);//pthread_mutex_lock(&_g_lock);
+    pthread_mutex_lock(&mutex);
 
     if (_g_debug)
 	fprintf(stderr, "fs_readdir(%s)\n", path);
@@ -907,7 +927,24 @@ fs_readdir(const char *path,
 	char rediscom[1000];
     sprintf(rediscom, "KEYS %d%s*:meta", depth + 1, path);
 
-    reply = redisCommand(_g_redis, "KEYS %d%s*:meta", depth + 1, path);
+    /* need wait */
+    redis_req.comm = rediscom;
+    redis_req.cond = &cond;
+    redis_req.mutex = &mutex;
+    redis_req.reply = reply;
+
+    /* Not need wait */
+    redis_req.comm = rediscom;
+    redis_req.cond = NULL;
+    redis_req.mutex = NULL;
+    redis_req.reply = reply;
+
+
+    // Enqueue(req);
+
+    pthread_cond_wait(&cond, &mutex);
+
+    //reply = redisCommand(_g_redis, "KEYS %d%s*:meta", depth + 1, path);
     
 
 
@@ -922,6 +959,7 @@ fs_readdir(const char *path,
     freeReplyObject(reply);
     freeReplyObject(subreply);
 
+    pthread_unlock(&mutex);
     path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);
     return 0;
 }
@@ -1711,6 +1749,7 @@ int main(int argc, char **argv) {
     
     if (_g_read_only)
 	printf("Filesystem is read-only.\n");
+
 
     return (fuse_main(args_c, args, &redisfs_operations, NULL));
 }
