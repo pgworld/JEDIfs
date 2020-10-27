@@ -552,6 +552,7 @@ int IsEmpty(Queue *queue)
 
 void Enqueue(Queue *queue, struct redis_comm_req *data)
 {
+		printf("start enqueue: %s\n", data->comm);
         Node *now=(Node *)malloc(sizeof(Node));
         now->data = *data;
         now->next = NULL;
@@ -570,55 +571,64 @@ void Enqueue(Queue *queue, struct redis_comm_req *data)
 
 
 struct redis_comm_req Dequeue(Queue *queue)
-{
-        struct redis_comm_req re;
-        Node *now;
-
-        pthread_mutex_lock(&mutex_lock);
-
-        now = queue->front;
-        re=now->data;
+{	
+	if(IsEmpty(queue))
+	{
+		struct redis_comm_req re;
+		return re;
+	}
+    struct redis_comm_req re;
+    Node *now;
+	
+    pthread_mutex_lock(&mutex_lock);
+	
+   	now = queue->front;
+	printf("%s\n", now->data.comm);
+    re=now->data;
+	printf("start Dequeue: %s\n", re.comm);
 	queue->front = now->next;
 	free(now);
-        queue->count--;
-
+    queue->count--;
+	
 	pthread_mutex_unlock(&mutex_lock);
 	up(&space);
-
-        return re;
+	
+    return re;
 }
 
 int IsFull(Queue *queue)
 {
-        return queue->count ==50;
+    return queue->count ==50;
 }
 
 
 void down(sem_t *sem)
 {
-        if(sem_wait(sem)<0){
-                printf("DOWN ERROR");
-
-        }
-
+    if(sem_wait(sem)<0)
+	{
+     	printf("DOWN ERROR");
+    }
 }
 
 void up(sem_t *sem)
 {
-        if(sem_post(sem)<0){
-                printf("UP ERROR");
-        }
+    if(sem_post(sem)<0)
+	{
+       	printf("UP ERROR");
+    }
 
 }
 
 void *consumer(){
+	printf("start consumer\n");
 	struct redis_comm_req req;
 	char *comm;
 	while(1) {
 		req = Dequeue(queue);
-		//if (!req.reply) {
-		//	continue;
-		//}
+		if (!req.comm) {
+			continue;
+		}
+		printf("consumer(%s)\n", req.comm);
 		if (req.reply != NULL) {
 			break;
 		}
@@ -651,7 +661,6 @@ redis_alive()
     {
 		char rediscom[1000];
 		sprintf(rediscom, "ping");
-		printf("to enqueue(%s)\n", rediscom);
 		reply = redisCommand(_g_redis, "%s", rediscom);
 
 	if ((reply != NULL) &&
@@ -888,7 +897,6 @@ fs_getattr(const char *path, struct stat *stbuf)
 	/* define redis_comm_req */
 	struct redis_comm_req redis_req;
 	struct redis_comm_req sub_redis_req;
-
 	/* define lock and init*/
 	pthread_cond_t cond;
 	pthread_mutex_t mutex;
@@ -899,9 +907,9 @@ fs_getattr(const char *path, struct stat *stbuf)
 
     if (_g_debug)
         fprintf(stderr, "fs_getattr(%s);\n", path);
-
+	printf("before redis_alive();\n");
     redis_alive();
-    
+    printf("after redis_alive();\n");
     memset(stbuf, 0, sizeof(struct stat));
 
     if (strlen(path) == 1)
@@ -919,7 +927,8 @@ fs_getattr(const char *path, struct stat *stbuf)
 
 		return 0;
     }
-
+	
+	printf("before sprintf\n");
     int depth = get_depth(path);
 	char rediscom[1000];
 	sprintf(rediscom, "EXISTS %d%s:meta", depth, path);
@@ -929,7 +938,9 @@ fs_getattr(const char *path, struct stat *stbuf)
 	redis_req.mutex = &mutex;
 	redis_req.reply = reply;
 	
+	printf("before enqueue\n");
 	Enqueue(queue, &redis_req);
+	printf("after enqueue\n");
 	pthread_cond_wait(&cond, &mutex);
 	
     if (redis_req.reply->integer == 0)
