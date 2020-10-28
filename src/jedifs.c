@@ -14,9 +14,11 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <semaphore.h>
+#include "rbtree.h"
+#include "queue.h"
 
 redisReply *reply;
-
+Queue *queue;
 pthread_t p_thread[1];
 int _g_redis_port = 6379;
 char _g_redis_host[100] = { "127.0.0.1" };
@@ -39,8 +41,7 @@ int _g_test = 1;
 // Connecting
 redisContext *_g_redis = NULL;
 
-
-// * rbtree
+/*
 enum node_color
 {
 	RED,
@@ -62,10 +63,6 @@ struct node_t
 
 struct node_t *root = NULL;
 
-/**
- * Create a red-black tree
- *
- */
 struct node_t *create_node(char *inp)
 {
 	struct node_t *new_node;
@@ -77,10 +74,6 @@ struct node_t *create_node(char *inp)
 	return new_node;
 }
 
-/**
- * Insert a node
- *
- */
 void insertion(const char *inp_t, pthread_mutex_t _t_lock)
 {
 	char *inp = (char *) inp_t;
@@ -198,10 +191,6 @@ void insertion(const char *inp_t, pthread_mutex_t _t_lock)
 	pthread_mutex_unlock(&_t_lock);
 }
 
-/**
- * Delete a node
- *
- */
 void deletion(char *data, pthread_mutex_t _t_lock)
 {
 	printf("delete %s from tree\n", data);
@@ -449,10 +438,6 @@ void deletion(char *data, pthread_mutex_t _t_lock)
 	}
 }
 
-/**
- * Print the inorder traversal of the tree
- *
- */
 struct node_t *tree_search(const char *data_t)
 {
 	char *data = (char *) data_t;
@@ -506,7 +491,9 @@ void path_unlock(const char *data_t, pthread_mutex_t _t_lock)
 	up(&(tree_search(data)->file_lock));
 	pthread_mutex_unlock(&_t_lock);
 }
+*/
 
+/*
 struct redis_comm_req {
 	char *comm;
 	redisReply *reply;
@@ -553,11 +540,11 @@ int IsEmpty(Queue *queue)
 void Enqueue(Queue *queue, struct redis_comm_req *data)
 {
 		printf("start enqueue: %s\n", data->comm);
-        Node *now=(Node *)malloc(sizeof(Node));
+        node *now=(node *)malloc(sizeof(Node));
         now->data = *data;
-        now->next = NULL;
+        now->next = null;
 
-        if(IsEmpty(queue))
+        if(isempty(queue))
         {
                 queue-> front = now;
         }
@@ -618,7 +605,7 @@ void up(sem_t *sem)
     }
 
 }
-
+*/
 void *consumer(){
 	printf("start consumer\n");
 	struct redis_comm_req req;
@@ -642,11 +629,13 @@ void *consumer(){
 	}
 	up(req.space);
 }
-
+/*
 void s_init(void)
 {
         sem_init(&space,0,50);
 }
+*/
+
 
 void
 redis_alive()
@@ -880,7 +869,7 @@ fs_readdir(const char *path,
 		sub_redis_req.comm = rediscom;
 		Enqueue(queue, &sub_redis_req);
 		pthread_cond_wait(&cond, &mutex);
-		filler(buf, strdub(sub_redis_req.reply->str), NULL, 0);
+		filler(buf, strdup(sub_redis_req.reply->str), NULL, 0);
 	}
 
 

@@ -67,15 +67,15 @@ tidy:
 #
 #  The filesystem
 #
-#jedifs: pathutil.o jedifs.o hiredis.o sds.o net.o read.o alloc.o async.o sockcompat.o dict.o
-jedifs: jedifs.o
+#jedifs: pathutil.o jedifs.o hiredis.o sds.o net.o read.o alloc.o async.o sockcompat.o dict.o rbtree.o
+jedifs: queue.o rbtree.o jedifs.o
 
 
 #
 #  The filesystem snapshot utility
 #
-#jedifs-snapshot: pathutil.o jedifs-snapshot.o hiredis.o sds.o net.o read.o alloc.o async.o sockcompat.o dict.o
-jedifs-snapshot: jedifs-snapshot.o
+#jedifs-snapshot: pathutil.o jedifs-snapshot.o hiredis.o sds.o net.o read.o alloc.o async.o sockcompat.o dict.o rbtree.o
+jedifs-snapshot: queue.o rbtree.o jedifs-snapshot.o
 
 
 #

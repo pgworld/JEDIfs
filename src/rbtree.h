@@ -1,56 +1,20 @@
-#include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <pthread.h>
-/*
-enum node_color
+#include <semaphore.h>
+//#include "queue.h"
+
+enum node_color{ RED, BLACK };
+struct node_t
 {
-	RED,
-	BLACK
+    const char *data;
+    int color;
+    sem_t file_lock;
+    struct node_t *link[2];
 };
 
-enum lock_states
-{
-	LOCKED,
-	UNLOCKED
-};
-*/
-struct node_t;
-/*{
-	char *data;
-	int color, lock_state;
-	struct node_t *link[2];
-};*/
-
-//struct node_t *root = NULL;
-
-/**
- * Create a red-black tree
- *
- */
 struct node_t *create_node(char *inp);
-
-/**
- * Insert a node
- *
- */
-void insertion(char *inp, pthread_mutex_t _t_lock);
-
-/**
- * Delete a node
- *
- */
+void insertion(const char *inp_t, pthread_mutex_t _t_lock);
 void deletion(char *data, pthread_mutex_t _t_lock);
-
-/**
- * Print the inorder traversal of the tree
- *
- */
-struct node_t *tree_search(char *data);
-
-void path_lock(char *data, pthread_mutex_t _t_lock);
-
-void path_unlock(char *data, pthread_mutex_t _t_lock);
-
-int check_lock(char *data, pthread_mutex_t _t_lock);
-
+struct node_t *tree_search(const char *data_t);
+void path_lock(const char *data_t, pthread_mutex_t _t_lock);
+void path_unlock(const char *data_t, pthread_mutex_t _t_lock);
