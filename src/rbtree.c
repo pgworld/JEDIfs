@@ -10,7 +10,7 @@ struct node_t *create_node(char *inp)
 		new_node = (struct node_t *)malloc(sizeof(struct node_t));
 		(new_node->data) = inp;
 		new_node -> color = RED;
-		sem_init(&(new_node->file_lock), 0, 2);
+		sem_init(&(new_node->file_lock), 0, 1);
 		new_node -> link[0] = new_node -> link[1] = NULL;
 		return new_node;
 }

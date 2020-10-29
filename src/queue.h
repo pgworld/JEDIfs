@@ -15,7 +15,7 @@ struct redis_comm_req
 
 typedef struct Node
 {
-	struct redis_comm_req data;
+	struct redis_comm_req *data;
 	struct Node *next;
 }Node;
 
@@ -30,7 +30,7 @@ void InitQueue(Queue *queue);
 int IsEmpty(Queue *queue);
 int IsFull(Queue *queue);
 void Enqueue(Queue *queue, struct redis_comm_req *data);
-struct redis_comm_req Dequeue(Queue *queue);
+struct redis_comm_req *Dequeue(Queue *queue);
 void down(sem_t *sem);
 void up(sem_t *sem);
 //void *consumer(void);

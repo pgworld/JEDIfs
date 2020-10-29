@@ -26,10 +26,11 @@ int IsFull(Queue *queue)
 }
 
 void Enqueue(Queue *queue, struct redis_comm_req *data)
-{
-	printf("start enqueue: %s\n", data->comm);
+{		
+	down(&space);
+	printf("in enqueue, redis_req(%s) address :%d\n", data->comm, data);
     Node *now=(Node *)malloc(sizeof(Node));
-    now->data = *data;
+    now->data = data;
     now->next = NULL;
 
     if(IsEmpty(queue))
@@ -44,29 +45,28 @@ void Enqueue(Queue *queue, struct redis_comm_req *data)
     queue->count++;
 }
 
-struct redis_comm_req Dequeue(Queue *queue)
+struct redis_comm_req *Dequeue(Queue *queue)
 {
     if(IsEmpty(queue))
     {
-        struct redis_comm_req re;
-        return re;
+		return NULL;
     }
-    struct redis_comm_req re;
+    struct redis_comm_req *re;
     Node *now;
 
     pthread_mutex_lock(&mutex_lock);
 
     now = queue->front;
-    printf("%s\n", now->data.comm);
-    re=now->data;
-    printf("start Dequeue: %s\n", re.comm);
+    printf("%s\n", now->data->comm);
+	re = now->data;
+	printf("in dequeue up, redis_req(%s) address: %d\n", re->comm,re);
     queue->front = now->next;
-    free(now);
+    //free(now);
     queue->count--;
 
     pthread_mutex_unlock(&mutex_lock);
     up(&space);
-
+	printf("in dequeue down, redis_req(%s) address: %d\n", re->comm,re);
 	return re;
 }
 
