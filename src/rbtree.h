@@ -8,7 +8,7 @@ struct node_t
 {
     const char *data;
     int color;
-    sem_t file_lock;
+    pthread_mutex_t file_mutex;
     struct node_t *link[2];
 };
 

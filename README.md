@@ -15,11 +15,11 @@ Intuitively it might seem that basing a filesystem around a simple key=value sto
 To build the code, assuming you have the required build dependencies
 installed, you should merely need to run:
 
-     make
+     $make
 
 Once built the software can be installed via:
 
-     make install
+     $make install
 
 It is possible to run the filesystem without having installed the
 software, via:
@@ -29,7 +29,6 @@ software, via:
 # TODO
 ---
 - Develop fs_rename
-- Multithreading(mutex lock from file lock)
 
 # time check
 ---

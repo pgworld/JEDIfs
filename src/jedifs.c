@@ -99,11 +99,11 @@ void *consumer(){
     	comm = req->comm;
 		redis_alive();
     	req->reply = redisCommand(_g_redis, comm);
-    	if (req->cond)
+    	if (req->cond && req->mutex)
 		{
-            pthread_mutex_lock(req->mutex);
+			pthread_mutex_lock(req->mutex);
             pthread_cond_signal(req->cond);
-            pthread_mutex_unlock(req->mutex);
+			pthread_mutex_unlock(req->mutex);
         }
     }
 }
@@ -267,7 +267,6 @@ is_directory(const char *path)
 
 	Enqueue(queue, &redis_req);
 	pthread_cond_wait(&cond, &mutex);
-	printf("is_dir end\n");
     if (redis_req.reply->integer == 0) ret = 1;
 	freeReplyObject(redis_req.reply);
 	pthread_mutex_unlock(&mutex);
@@ -504,7 +503,6 @@ fs_mkdir(const char *path, mode_t mode)
 	redis_req.cond = NULL;
 	redis_req.mutex = NULL;
 	redis_req.reply = reply;
-	printf("mkdir req comm: %s\n", redis_req.comm);
 	Enqueue(queue, &redis_req);
 	freeReplyObject(redis_req.reply);
     path_unlock(path, _g_lock);//pthread_mutex_unlock(&_g_lock);

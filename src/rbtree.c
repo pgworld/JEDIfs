@@ -10,7 +10,7 @@ struct node_t *create_node(char *inp)
 		new_node = (struct node_t *)malloc(sizeof(struct node_t));
 		(new_node->data) = inp;
 		new_node -> color = RED;
-		sem_init(&(new_node->file_lock), 0, 1);
+//		pthread_mutex_init(&(new_node->file_mutex), NULL);
 		new_node -> link[0] = new_node -> link[1] = NULL;
 		return new_node;
 }
@@ -135,7 +135,6 @@ void insertion(const char *inp_t, pthread_mutex_t _t_lock)
 
 void deletion(char *data, pthread_mutex_t _t_lock)
 {
-    printf("delete %s from tree\n", data);
     pthread_mutex_lock(&_t_lock);
     struct node_t *stack[98], *ptr, *xPtr, *yPtr;
     struct node_t *pPtr, *qPtr, *rPtr;
@@ -383,7 +382,6 @@ void deletion(char *data, pthread_mutex_t _t_lock)
 struct node_t *tree_search(const char *data_t)
 {
     char *data = (char *) data_t;
-    printf("tree_search(%s)\n", data);
     struct node_t *stack[98], *ptr, *xPtr, *yPtr;
     struct node_t *pPtr, *qPtr, *rPtr;
     int dir[98], ht = 0, diff, i;
@@ -391,7 +389,6 @@ struct node_t *tree_search(const char *data_t)
 
     if (!root)
     {
-        printf("tree_search end\n");
         return NULL;
     }
 
@@ -400,7 +397,6 @@ struct node_t *tree_search(const char *data_t)
     {
         if(strcmp(data, ptr->data) == 0)
         {
-            printf("tree_search end\n");
             return ptr;
         }
         diff = strcmp(data, ptr->data) > 0 ? 1 : 0;
@@ -408,29 +404,31 @@ struct node_t *tree_search(const char *data_t)
         dir[ht++] = diff;
         ptr = ptr->link[diff];
     }
-    printf("tree_search end\n");
     return NULL;
 }
 
 void path_lock(const char *data_t, pthread_mutex_t _t_lock)
 {
-    char *data = (char *) data_t;
+
+//    char *data = (char *) data_t;
     pthread_mutex_lock(&_t_lock);
-    if(!tree_search(data))
+/*    if(!tree_search(data))
     {
         pthread_mutex_unlock(&_t_lock);
         insertion(data, _t_lock);
         pthread_mutex_lock(&_t_lock);
     }
-    down(&(tree_search(data)->file_lock));
+    pthread_mutex_lock(&(tree_search(data)->file_mutex));
+*/	printf("path_lock(%s)\n", data_t);
     pthread_mutex_unlock(&_t_lock);
 }
 
 void path_unlock(const char *data_t, pthread_mutex_t _t_lock)
 {
-    char *data = (char *) data_t;
+//    char *data = (char *) data_t;
     pthread_mutex_lock(&_t_lock);
-    up(&(tree_search(data)->file_lock));
+//    pthread_mutex_unlock(&(tree_search(data)->file_mutex));
+	printf("path_unlock(%s)\n", data_t);
     pthread_mutex_unlock(&_t_lock);
 }
 

@@ -28,7 +28,6 @@ int IsFull(Queue *queue)
 void Enqueue(Queue *queue, struct redis_comm_req *data)
 {		
 	down(&space);
-	printf("in enqueue, redis_req(%s) address :%d\n", data->comm, data);
     Node *now=(Node *)malloc(sizeof(Node));
     now->data = data;
     now->next = NULL;
@@ -57,16 +56,13 @@ struct redis_comm_req *Dequeue(Queue *queue)
     pthread_mutex_lock(&mutex_lock);
 
     now = queue->front;
-    printf("%s\n", now->data->comm);
 	re = now->data;
-	printf("in dequeue up, redis_req(%s) address: %d\n", re->comm,re);
     queue->front = now->next;
     //free(now);
     queue->count--;
 
     pthread_mutex_unlock(&mutex_lock);
     up(&space);
-	printf("in dequeue down, redis_req(%s) address: %d\n", re->comm,re);
 	return re;
 }
 
