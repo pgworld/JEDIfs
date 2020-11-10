@@ -10,23 +10,23 @@ struct node_t *create_node(char *inp)
 		new_node = (struct node_t *)malloc(sizeof(struct node_t));
 		(new_node->data) = inp;
 		new_node -> color = RED;
-//		pthread_mutex_init(&(new_node->file_mutex), NULL);
+		pthread_mutex_init(&(new_node->file_mutex), NULL);
 		new_node -> link[0] = new_node -> link[1] = NULL;
 		return new_node;
 }
 
 struct node_t *root = NULL;
-void insertion(const char *inp_t, pthread_mutex_t _t_lock)
+void insertion(const char *inp_t, pthread_mutex_t *_t_lock)
 {
     char *inp = (char *) inp_t;
-    pthread_mutex_lock(&_t_lock);
+    pthread_mutex_lock(_t_lock);
     struct node_t *stack[98], *ptr, *newnode, *xPtr, *yPtr;
     int dir[98], ht = 0, index;
     ptr = root;
     if(!root)
     {
         root = create_node(inp);
-        pthread_mutex_unlock(&_t_lock);
+        pthread_mutex_unlock(_t_lock);
         return;
     }
 
@@ -37,7 +37,7 @@ void insertion(const char *inp_t, pthread_mutex_t _t_lock)
     {
         if(strcmp(inp, ptr->data) == 0)
         {
-            pthread_mutex_unlock(&_t_lock);
+            pthread_mutex_unlock(_t_lock);
             return;
         }
         index = (strcmp(inp, ptr->data)) > 0 ? 1 : 0;
@@ -130,12 +130,12 @@ void insertion(const char *inp_t, pthread_mutex_t _t_lock)
         }
     }
     root -> color = BLACK;
-    pthread_mutex_unlock(&_t_lock);
+    pthread_mutex_unlock(_t_lock);
 }
 
-void deletion(char *data, pthread_mutex_t _t_lock)
+void deletion(char *data, pthread_mutex_t *_t_lock)
 {
-    pthread_mutex_lock(&_t_lock);
+    pthread_mutex_lock(_t_lock);
     struct node_t *stack[98], *ptr, *xPtr, *yPtr;
     struct node_t *pPtr, *qPtr, *rPtr;
     int dir[98], ht = 0, diff, i;
@@ -143,7 +143,7 @@ void deletion(char *data, pthread_mutex_t _t_lock)
 
     if (!root)
     {
-        pthread_mutex_unlock(&_t_lock);
+        pthread_mutex_unlock(_t_lock);
         return;
     }
 
@@ -232,7 +232,7 @@ void deletion(char *data, pthread_mutex_t _t_lock)
 
     if (ht < 1)
     {
-        pthread_mutex_unlock(&_t_lock);
+        pthread_mutex_unlock(_t_lock);
         return;
     }
 
@@ -374,7 +374,7 @@ void deletion(char *data, pthread_mutex_t _t_lock)
                 }
             }
             ht--;
-            pthread_mutex_unlock(&_t_lock);
+            pthread_mutex_unlock(_t_lock);
         }
     }
 }
@@ -407,28 +407,33 @@ struct node_t *tree_search(const char *data_t)
     return NULL;
 }
 
-void path_lock(const char *data_t, pthread_mutex_t _t_lock)
+void path_lock(const char *data_t, pthread_mutex_t *_t_lock)
 {
-
-//    char *data = (char *) data_t;
-    pthread_mutex_lock(&_t_lock);
-/*    if(!tree_search(data))
+	printf("(lock)address of _t_lock: %x\n", _t_lock);
+    char *data = (char *) data_t;
+	//pthread_mutex_lock(_t_lock);
+    if(!tree_search(data))
     {
-        pthread_mutex_unlock(&_t_lock);
+        //pthread_mutex_unlock(_t_lock);
         insertion(data, _t_lock);
-        pthread_mutex_lock(&_t_lock);
+        //pthread_mutex_lock(_t_lock);
     }
     pthread_mutex_lock(&(tree_search(data)->file_mutex));
-*/	printf("path_lock(%s)\n", data_t);
-    pthread_mutex_unlock(&_t_lock);
+	printf("path_lock(%s)\n", data_t);
+    //pthread_mutex_unlock(_t_lock);
 }
 
-void path_unlock(const char *data_t, pthread_mutex_t _t_lock)
+void path_unlock(const char *data_t, pthread_mutex_t *_t_lock)
 {
-//    char *data = (char *) data_t;
-    pthread_mutex_lock(&_t_lock);
-//    pthread_mutex_unlock(&(tree_search(data)->file_mutex));
+	printf("(unlock)address of _t_lock: %x\n", _t_lock);
+    char *data = (char *) data_t;
+    //pthread_mutex_lock(_t_lock);
+	if(!tree_search(data))
+	{
+		return;
+	}
+    pthread_mutex_unlock(&(tree_search(data)->file_mutex));
 	printf("path_unlock(%s)\n", data_t);
-    pthread_mutex_unlock(&_t_lock);
+    //pthread_mutex_unlock(_t_lock);
 }
 

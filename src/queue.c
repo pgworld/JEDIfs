@@ -6,7 +6,6 @@
 #include "queue.h"
 
 pthread_mutex_t mutex_lock;
-sem_t space;
 
 void InitQueue(Queue *queue)
 {
@@ -25,9 +24,9 @@ int IsFull(Queue *queue)
 	return queue->count == 50;
 }
 
-void Enqueue(Queue *queue, struct redis_comm_req *data)
-{		
-	down(&space);
+void Enqueue(Queue *queue, struct redis_comm_req *data, sem_t *space, sem_t *item)
+{
+	down(space);
     Node *now=(Node *)malloc(sizeof(Node));
     now->data = data;
     now->next = NULL;
@@ -42,14 +41,16 @@ void Enqueue(Queue *queue, struct redis_comm_req *data)
     }
     queue->rear = now;
     queue->count++;
+	up(item);
 }
 
-struct redis_comm_req *Dequeue(Queue *queue)
+struct redis_comm_req *Dequeue(Queue *queue, sem_t *space, sem_t *item)
 {
     if(IsEmpty(queue))
     {
 		return NULL;
     }
+	down(item);
     struct redis_comm_req *re;
     Node *now;
 
@@ -62,7 +63,7 @@ struct redis_comm_req *Dequeue(Queue *queue)
     queue->count--;
 
     pthread_mutex_unlock(&mutex_lock);
-    up(&space);
+	up(space);
 	return re;
 }
 
@@ -106,9 +107,10 @@ void *consumer(){
     up(req.space);
 }
 */
-void s_init(void)
+void s_init(sem_t *space, sem_t *item)
 {
-    sem_init(&space,0,50);
+    sem_init(space,0,50);
+	sem_init(item,0,0);
 }
 
 

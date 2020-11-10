@@ -2,7 +2,7 @@
 #
 #  Flags and stuffs.
 #
-CFLAGS=-Wall -O3  `pkg-config fuse --cflags` -I. -DVERSION=$(VERSION) -D_DEFAULT_SOURCE -g
+CFLAGS=-Wall -O3  `pkg-config fuse --cflags` -I. -DVERSION=$(VERSION) -D_DEFAULT_SOURCE -g -w
 LDFLAGS=`pkg-config fuse --libs`
 LDLIBS := $(shell pkg-config fuse --libs) libhiredis.a
 
