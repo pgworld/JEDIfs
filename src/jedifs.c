@@ -14,12 +14,13 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <semaphore.h>
+#include <time.h>
 #include "rbtree.h"
 #include "queue.h"
 
 redisReply *reply;
 Queue *queue;
-pthread_t p_thread[10];
+pthread_t p_thread;
 int _g_redis_port = 6379;
 char _g_redis_host[100] = { "127.0.0.1" };
 int _g_debug = 1;
@@ -30,7 +31,7 @@ int _g_fast = 0;
 pthread_mutex_t mutex_lock;
 sem_t space;
 sem_t item;
-
+pthread_mutex_t dequeue_lock;
 
 /*
  * To test
@@ -40,6 +41,15 @@ int _g_test = 1;
 // Connecting
 redisContext *_g_redis = NULL;
 
+void delay(clock_t n)
+
+{
+
+  clock_t start = clock();
+
+  while(clock() - start < n);
+
+}
 
 void
 redis_alive()
@@ -90,14 +100,61 @@ redis_alive()
 void *consumer(void *arg){
 	printf("start consumter: %x\n", pthread_self());
     struct redis_comm_req *req;
-    char *comm;
+	struct timeval timeout = { 5, 0 };
+	redisReply *alive = NULL;
+	char *comm;
     while(1)
 	{
-    	req = Dequeue(queue, &space, &item);
-    	if (!req) continue;
-    	if (req->reply != NULL) break;
-    	comm = req->comm;
-		redis_alive();
+    	req = Dequeue(queue, &space, &item, &dequeue_lock);
+		
+    	if (!req || !req->comm)
+		{
+			continue;
+		}
+    	if (req->reply != NULL)
+		{
+			printf("unintended context switch\n");
+			break;
+		}
+		while(1)
+		{
+	    	if (_g_redis != NULL)
+   	 		{
+        		alive = redisCommand(_g_redis, "PING");
+
+    			if ((alive != NULL) &&
+        			(alive->str != NULL) && (strcmp(alive->str, "PONG") == 0))
+				{
+        			freeReplyObject(alive);
+					break;
+    			}
+    			else
+    			{
+        			if (alive != NULL)
+        			freeReplyObject(alive);
+    			}
+    		}
+
+    		_g_redis = redisConnectWithTimeout(_g_redis_host, _g_redis_port, timeout);
+    		if (_g_redis == NULL)
+    		{
+    			fprintf(stderr, "Failed to connect to redis on [%s:%d].\n",
+        		_g_redis_host, _g_redis_port);
+    			exit(1);
+    		}
+    		else
+    		{
+    			if (_g_debug)
+				{
+        			fprintf(stderr, "Reconnected to redis server on [%s:%d]\n",
+            		_g_redis_host, _g_redis_port);
+					break;
+				}
+    		}	
+
+
+		}
+		comm = req->comm;
     	req->reply = redisCommand(_g_redis, comm);
     	if (req->cond && req->mutex)
 		{
@@ -184,7 +241,8 @@ fs_init()
 	//sleep(0.5);
 	s_init(&space, &item);
 	pthread_mutex_init(&mutex_lock, NULL);
-	pthread_create(&p_thread[0],NULL,consumer,NULL);
+	pthread_mutex_init(&dequeue_lock, NULL);
+	pthread_create(&p_thread,NULL,consumer,NULL);
     return 0;
 }
 
@@ -297,11 +355,16 @@ fs_readdir(const char *path,
 static int
 fs_getattr(const char *path, struct stat *stbuf)
 {
-    redisReply *reply = NULL;
+    redisReply *reply1 = NULL;
+	redisReply *reply2 = NULL;
+	redisReply *reply3 = NULL;
 
 	/* define redis_comm_req */
-	struct redis_comm_req redis_req;
-	struct redis_comm_req sub_redis_req;
+	struct redis_comm_req redis_req1;
+	struct redis_comm_req redis_req2;
+	struct redis_comm_req redis_req3;
+	//struct redis_comm_req sub_redis_req;
+
 	/* define lock and init*/
 	pthread_cond_t cond;
 	pthread_mutex_t mutex;
@@ -331,95 +394,102 @@ fs_getattr(const char *path, struct stat *stbuf)
     }
 	
     int depth = get_depth(path);
-	char rediscom[1000];
+	char rediscom[200];
 	sprintf(rediscom, "EXISTS %d%s:meta", depth, path);
 
-	redis_req.comm = rediscom;
-	redis_req.cond = &cond;
-	redis_req.mutex = &mutex;
-	redis_req.reply = reply;
+	redis_req1.comm = rediscom;
+	redis_req1.cond = &cond;
+	redis_req1.mutex = &mutex;
+	redis_req1.reply = reply1;
 	
-	Enqueue(queue, &redis_req, &space, &item);
+	Enqueue(queue, &redis_req1, &space, &item);
 	pthread_cond_wait(&cond, &mutex);
-    if (redis_req.reply->integer == 0)
+	delay(500);
+    if (redis_req1.reply->integer == 0)
     {
 		pthread_mutex_unlock(&mutex);
 		path_unlock(path, &_g_lock);
 		return -ENOENT;
     }
-	freeReplyObject(redis_req.reply);
 	sprintf(rediscom, "HMGET %d%s:meta CTIME ATIME MTIME GID UID LINK", depth, path);
 	
-	redis_req.comm = rediscom;
+	redis_req2.comm = rediscom;
+	redis_req2.cond = &cond;
+	redis_req2.mutex = &mutex;
+	redis_req2.reply = reply2;
 
-	redis_req.reply = NULL;
-	Enqueue(queue, &redis_req, &space, &item);
+	Enqueue(queue, &redis_req2, &space, &item);
 	pthread_cond_wait(&cond, &mutex);
+	delay(500);
 
-    if ((redis_req.reply->element[0] != NULL)
-        && (redis_req.reply->element[0]->type == REDIS_REPLY_STRING))
-        stbuf->st_ctime = atoi(redis_req.reply->element[0]->str);
-    if ((redis_req.reply->element[1] != NULL)
-        && (redis_req.reply->element[1]->type == REDIS_REPLY_STRING))
-        stbuf->st_atime = atoi(redis_req.reply->element[1]->str);
-    if ((redis_req.reply->element[2] != NULL)
-        && (redis_req.reply->element[2]->type == REDIS_REPLY_STRING))
-        stbuf->st_mtime = atoi(redis_req.reply->element[2]->str);
-    if ((redis_req.reply->element[3] != NULL)
-        && (redis_req.reply->element[3]->type == REDIS_REPLY_STRING))
-        stbuf->st_gid = atoi(redis_req.reply->element[3]->str);
-    if ((redis_req.reply->element[4] != NULL)
-        && (redis_req.reply->element[4]->type == REDIS_REPLY_STRING))
-        stbuf->st_uid = atoi(redis_req.reply->element[4]->str);
-    if ((redis_req.reply->element[5] != NULL)
-        && (redis_req.reply->element[5]->type == REDIS_REPLY_STRING))
-        stbuf->st_nlink = atoi(redis_req.reply->element[5]->str);
-	
+    if ((redis_req2.reply->element[0] != NULL)
+        && (redis_req2.reply->element[0]->type == REDIS_REPLY_STRING))
+        stbuf->st_ctime = atoi(redis_req2.reply->element[0]->str);
+    if ((redis_req2.reply->element[1] != NULL)
+        && (redis_req2.reply->element[1]->type == REDIS_REPLY_STRING))
+        stbuf->st_atime = atoi(redis_req2.reply->element[1]->str);
+    if ((redis_req2.reply->element[2] != NULL)
+        && (redis_req2.reply->element[2]->type == REDIS_REPLY_STRING))
+        stbuf->st_mtime = atoi(redis_req2.reply->element[2]->str);
+    if ((redis_req2.reply->element[3] != NULL)
+        && (redis_req2.reply->element[3]->type == REDIS_REPLY_STRING))
+        stbuf->st_gid = atoi(redis_req2.reply->element[3]->str);
+    if ((redis_req2.reply->element[4] != NULL)
+        && (redis_req2.reply->element[4]->type == REDIS_REPLY_STRING))
+        stbuf->st_uid = atoi(redis_req2.reply->element[4]->str);
+    if ((redis_req2.reply->element[5] != NULL)
+        && (redis_req2.reply->element[5]->type == REDIS_REPLY_STRING))
+        stbuf->st_nlink = atoi(redis_req2.reply->element[5]->str);
 	sprintf(rediscom, "HMGET %d%s:meta TYPE MODE SIZE", depth, path);
-	redis_req.comm = rediscom;
-	redis_req.reply = NULL;
-	Enqueue(queue, &redis_req, &space, &item);
+	redis_req3.comm = rediscom;
+	redis_req3.cond = &cond;
+	redis_req3.mutex = &mutex;
+	redis_req3.reply = reply3;
+	Enqueue(queue, &redis_req3, &space, &item);
 	pthread_cond_wait(&cond, &mutex);
+	delay(500);
 
-    if ((redis_req.reply != NULL) && (redis_req.reply->element[0] != NULL)
-        && (redis_req.reply->element[0]->type == REDIS_REPLY_STRING))
+    if ((redis_req3.reply != NULL) && (redis_req3.reply->element[0] != NULL)
+        && (redis_req3.reply->element[0]->type == REDIS_REPLY_STRING))
     {
 
-        if ((redis_req.reply->element[1] != NULL)
-            && (redis_req.reply->element[1]->type == REDIS_REPLY_STRING))
+        if ((redis_req3.reply->element[1] != NULL)
+            && (redis_req3.reply->element[1]->type == REDIS_REPLY_STRING))
         {
-            stbuf->st_mode = atoi(redis_req.reply->element[1]->str);
+            stbuf->st_mode = atoi(redis_req3.reply->element[1]->str);
         }
 
-        if (strcmp(redis_req.reply->element[0]->str, "DIR") == 0)
+        if (strcmp(redis_req3.reply->element[0]->str, "DIR") == 0)
         {
             stbuf->st_mode |= S_IFDIR;
         }
-        else if (strcmp(redis_req.reply->element[0]->str, "LINK") == 0)
+        else if (strcmp(redis_req3.reply->element[0]->str, "LINK") == 0)
         {
             stbuf->st_mode |= S_IFLNK;
             stbuf->st_nlink = 1;
             stbuf->st_size = 0;
         }
-        else if (strcmp(redis_req.reply->element[0]->str, "FILE") == 0)
+        else if (strcmp(redis_req3.reply->element[0]->str, "FILE") == 0)
         {
-            if ((redis_req.reply->element[2] != NULL)
-                && (redis_req.reply->element[2]->type == REDIS_REPLY_STRING))
+            if ((redis_req3.reply->element[2] != NULL)
+                && (redis_req3.reply->element[2]->type == REDIS_REPLY_STRING))
             {
                 if (_g_debug)
                     fprintf(stderr, "found file\n");
-                stbuf->st_size = atoi(redis_req.reply->element[2]->str);
+                stbuf->st_size = atoi(redis_req3.reply->element[2]->str);
             }
         }
         else
         {
             if (_g_debug)
                 fprintf(stderr, "UNKNOWN ENTRY TYPE: %s\n",
-                        redis_req.reply->element[0]->str);
+                        redis_req3.reply->element[0]->str);
         }
     }
 	pthread_mutex_unlock(&mutex);
-	freeReplyObject(redis_req.reply);
+	freeReplyObject(reply1);
+	freeReplyObject(reply2);
+	freeReplyObject(reply3);
     path_unlock(path, &_g_lock);
     return 0;
 }
@@ -427,12 +497,18 @@ fs_getattr(const char *path, struct stat *stbuf)
 static int
 fs_mkdir(const char *path, mode_t mode)
 {
+    insertion(path, &_g_lock);
     redisReply *reply = NULL;
 
 	struct redis_comm_req redis_req;
+	pthread_cond_t cond;
+    pthread_mutex_t mutex;
 
-    insertion(path, &_g_lock);
+    pthread_cond_init(&cond, NULL);
+    pthread_mutex_init(&mutex, NULL);
+
     path_lock(path, &_g_lock);
+	pthread_mutex_lock(&mutex);
 
     if (_g_debug)
 		fprintf(stderr, "fs_mkdir(%s);\n", path);
@@ -448,16 +524,17 @@ fs_mkdir(const char *path, mode_t mode)
 
     int depth = get_depth(path);
 
-	char rediscom[1000];
-	sprintf(rediscom, "HMSET %d%s:meta NAME %s TYPE DIR MODE %d UID %d GID %d SIZE %d CTIME %d MTIME %d ATIME %d LINK 1", depth, path, entry, mode, fuse_get_context()->uid, fuse_get_context()->gid, 0, time(NULL), time(NULL), time(NULL));
+	char rediscom[500];
+	sprintf(rediscom, "HMSET %d%s:meta NAME %s TYPE DIR MODE %d UID %d GID %d SIZE %d CTIME %d MTIME %d ATIME %d LINK 1\0", depth, path, entry, mode, fuse_get_context()->uid, fuse_get_context()->gid, 0, time(NULL), time(NULL), time(NULL));
 	
 	redis_req.comm = rediscom;
-	redis_req.cond = NULL;
-	redis_req.mutex = NULL;
+	redis_req.cond = &cond;
+	redis_req.mutex = &mutex;
 	redis_req.reply = reply;
 	Enqueue(queue, &redis_req, &space, &item);
-	freeReplyObject(redis_req.reply);
-    path_unlock(path, &_g_lock);//pthread_mutex_unlock(&_g_lock);
+	pthread_cond_wait(&cond, &mutex);
+    path_unlock(path, &_g_lock);
+	pthread_mutex_unlock(&mutex);
     return 0;
 }
 
@@ -473,6 +550,7 @@ count_dir_ent(const char *path)
 	pthread_cond_init(&cond, NULL);
 	pthread_mutex_init(&mutex, NULL);
 	pthread_mutex_lock(&mutex);
+
 
     int depth = get_depth(path);
 
@@ -640,8 +718,6 @@ fs_read(const char *path, char *buf, size_t size, off_t offset,
     if (_g_debug)
         fprintf(stderr, "fs_read(%s);\n", path);
 
-    redis_alive();
-    
     int depth = get_depth(path);
 	char rediscom[1000];
 
@@ -718,8 +794,6 @@ fs_symlink(const char *target, const char *path)
 	    return -EPERM;
     }
 
-    redis_alive();
-	
 	char rediscom[1000];
 	redis_req.cond = NULL;
 	redis_req.mutex = NULL;
@@ -806,8 +880,6 @@ fs_readlink(const char *path, char *buf, size_t size)
     if (_g_debug)
 	fprintf(stderr, "fs_readlink(%s);\n",path);
 
-    redis_alive();
-
 	char rediscom[1000];
     sprintf(rediscom, "HGET %d%s:meta TARGET",depth,path);
 
@@ -866,10 +938,14 @@ fs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
     insertion(path, &_g_lock);
     redisReply *reply = NULL;
-
+	pthread_cond_t cond;
+	pthread_mutex_t mutex;
+	pthread_cond_init(&cond, NULL);
+	pthread_mutex_init(&mutex, NULL);
 	struct redis_comm_req redis_req;
 	
 	path_lock(path, &_g_lock);
+	//pthread_mutex_lock(&mutex);
 
     if (_g_debug)
 		fprintf(stderr, "fs_create(%s);\n", path);
@@ -888,13 +964,15 @@ fs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     sprintf(rediscom, "HMSET %d%s:meta NAME %s TYPE FILE MODE %d UID %d GID %d SIZE %d CTIME %d MTIME %d ATIME %d LINK 1", depth, path, entry, mode, fuse_get_context()->uid, fuse_get_context()->gid, 0, time(NULL), time(NULL), time(NULL));
 	
 	redis_req.comm = rediscom;
-	redis_req.cond = NULL;
-	redis_req.mutex = NULL;
+	redis_req.cond = &cond;
+	redis_req.mutex = &mutex;
 	redis_req.reply = reply;
 
 	Enqueue(queue, &redis_req, &space, &item);
+	pthread_cond_wait(&cond, &mutex);
 	freeReplyObject(redis_req.reply);
     path_unlock(path, &_g_lock);
+	pthread_mutex_unlock(&mutex);
     return 0;
 }
 
@@ -922,8 +1000,6 @@ fs_chown(const char *path, uid_t uid, gid_t gid)
 		path_unlock(path, &_g_lock);//pthread_mutex_unlock(&_g_lock);
 		return -EPERM;
     }
-    
-    redis_alive();
     
     int depth = get_depth(path);
 
@@ -965,8 +1041,6 @@ fs_chmod(const char *path, mode_t mode)
 	return -EPERM;
     }
 
-    redis_alive();
-
     int depth = get_depth(path);
 	char rediscom[1000];
     sprintf(rediscom, "HSET %d%s:meta MODE %d MTIME %d", depth, path, mode, time(NULL));
@@ -985,9 +1059,11 @@ fs_chmod(const char *path, mode_t mode)
 static int
 fs_unlink(const char *path)
 {
-    redisReply *reply =NULL;
+    redisReply *reply1 =NULL;
+	redisReply *reply2 =NULL;
 
-	struct redis_comm_req redis_req;
+	struct redis_comm_req redis_req1;
+	struct redis_comm_req redis_req2;
 
     path_lock(path, &_g_lock);
 
@@ -1002,24 +1078,23 @@ fs_unlink(const char *path)
     }
 
 
-	char rediscom[1000];
-    sprintf(rediscom, "DEL %d%s:meta", depth, path);
-	redis_req.comm = rediscom;
-	redis_req.cond = NULL;
-	redis_req.mutex = NULL;
-	redis_req.reply = reply;
+	char rediscom1[200];
+    sprintf(rediscom1, "DEL %d%s:meta", depth, path);
+	redis_req1.cond = NULL;
+	redis_req1.mutex = NULL;
+	redis_req1.comm = rediscom1;
+	redis_req1.reply = reply1;
 
-	Enqueue(queue, &redis_req, &space, &item);
-	freeReplyObject(redis_req.reply);
-	redis_req.reply = NULL;
-    
-    sprintf(rediscom, "DEL %d%s:data", depth, path);
-	redis_req.comm = rediscom;
+	Enqueue(queue, &redis_req1, &space, &item);
+	char rediscom2[200];
+    sprintf(rediscom2, "DEL %d%s:data", depth, path);
+	redis_req2.cond = NULL;
+	redis_req2.mutex = NULL;
+    redis_req2.comm = rediscom2;
+	redis_req2.reply = reply2;
 
-
-	Enqueue(queue, &redis_req, &space, &item);
+	Enqueue(queue, &redis_req2, &space, &item);
 	
-	freeReplyObject(redis_req.reply);
     path_unlock(path, &_g_lock);//pthread_mutex_unlock(&_g_lock);
     //deletion(path, &_g_lock);
     return 0;
@@ -1050,16 +1125,14 @@ fs_utimens(const char *path, const struct timespec tv[2])
 		return -EPERM;
     }
 
-    redis_alive();
-
     int depth = get_depth(path);
 	
 	char rediscom[1000];
 
     sprintf(rediscom, "HSET %d%s:meta ATIME %d MTIME %d", depth, path, tv[0].tv_sec, tv[1].tv_sec);
 	redis_req.comm = rediscom;
-	redis_req.cond = NULL;
-	redis_req.mutex = NULL;
+	redis_req.cond = &cond;
+	redis_req.mutex = &mutex;
 	redis_req.reply = reply;
 	
 	Enqueue(queue, &redis_req, &space, &item);

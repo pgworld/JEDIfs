@@ -5,7 +5,6 @@
 #include <semaphore.h>
 #include "queue.h"
 
-pthread_mutex_t mutex_lock;
 
 void InitQueue(Queue *queue)
 {
@@ -26,44 +25,44 @@ int IsFull(Queue *queue)
 
 void Enqueue(Queue *queue, struct redis_comm_req *data, sem_t *space, sem_t *item)
 {
-	down(space);
+	sem_wait(space);
     Node *now=(Node *)malloc(sizeof(Node));
     now->data = data;
     now->next = NULL;
 
     if(IsEmpty(queue))
     {
-    	queue-> front = now;
+    	queue->front = now;
     }
     else
     {
-    queue->rear->next=now;
+    	queue->rear->next=now;
     }
     queue->rear = now;
     queue->count++;
-	up(item);
+	sem_post(item);
 }
 
-struct redis_comm_req *Dequeue(Queue *queue, sem_t *space, sem_t *item)
+struct redis_comm_req *Dequeue(Queue *queue, sem_t *space, sem_t *item, pthread_mutex_t *dequeue_lock)
 {
     if(IsEmpty(queue))
     {
 		return NULL;
     }
-	down(item);
+	sem_wait(item);
     struct redis_comm_req *re;
     Node *now;
 
-    pthread_mutex_lock(&mutex_lock);
+    pthread_mutex_lock(dequeue_lock);
 
     now = queue->front;
-	re = now->data;
-    queue->front = now->next;
-    //free(now);
+	re = queue->front->data;
+    queue->front = queue->front->next;
     queue->count--;
 
-    pthread_mutex_unlock(&mutex_lock);
-	up(space);
+    pthread_mutex_unlock(dequeue_lock);
+	sem_post(space);
+
 	return re;
 }
 

@@ -409,31 +409,27 @@ struct node_t *tree_search(const char *data_t)
 
 void path_lock(const char *data_t, pthread_mutex_t *_t_lock)
 {
-	printf("(lock)address of _t_lock: %x\n", _t_lock);
     char *data = (char *) data_t;
-	//pthread_mutex_lock(_t_lock);
+	pthread_mutex_lock(_t_lock);
     if(!tree_search(data))
     {
-        //pthread_mutex_unlock(_t_lock);
+        pthread_mutex_unlock(_t_lock);
         insertion(data, _t_lock);
-        //pthread_mutex_lock(_t_lock);
+        pthread_mutex_lock(_t_lock);
     }
     pthread_mutex_lock(&(tree_search(data)->file_mutex));
-	printf("path_lock(%s)\n", data_t);
-    //pthread_mutex_unlock(_t_lock);
+    pthread_mutex_unlock(_t_lock);
 }
 
 void path_unlock(const char *data_t, pthread_mutex_t *_t_lock)
 {
-	printf("(unlock)address of _t_lock: %x\n", _t_lock);
     char *data = (char *) data_t;
-    //pthread_mutex_lock(_t_lock);
+    pthread_mutex_lock(_t_lock);
 	if(!tree_search(data))
 	{
 		return;
 	}
     pthread_mutex_unlock(&(tree_search(data)->file_mutex));
-	printf("path_unlock(%s)\n", data_t);
-    //pthread_mutex_unlock(_t_lock);
+    pthread_mutex_unlock(_t_lock);
 }
 
