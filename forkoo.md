@@ -1,11 +1,16 @@
 1. 실행방법
 ---
 sudo make
+
 sudo make install
 
+
 (필요한 라이브러리)
+
 libdev-fuse
+
 redis-server
+
 
 2. 확인된 문제들
 ---
